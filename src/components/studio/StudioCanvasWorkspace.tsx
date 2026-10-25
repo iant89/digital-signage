@@ -51,6 +51,7 @@ export const StudioCanvasWorkspace: React.FC = () => {
     showSafeArea,
     showRulers,
     timelineTimeMs,
+    timelinePlaying,
   } = useStudioStore();
 
   const [dragState, setDragState] = useState<DragMode | null>(null);
@@ -65,12 +66,18 @@ export const StudioCanvasWorkspace: React.FC = () => {
 
   const evaluatedElements = useMemo(() => {
     if (!activeScene) return [];
+    // While designing on the canvas (not actively playing the timeline preview),
+    // always render objects in their actual authored position/size/rotation so
+    // slide-in and motion objects are never stuck at their animation start offset.
+    if (!timelinePlaying || dragState !== null) {
+      return [...activeScene.elements].sort((a, b) => a.zIndex - b.zIndex);
+    }
     return computeSceneElementsAtTime(
       activeScene.elements,
       activeScene.animationTracks,
       timelineTimeMs
     ).sort((a, b) => a.zIndex - b.zIndex);
-  }, [activeScene, timelineTimeMs]);
+  }, [activeScene, timelineTimeMs, timelinePlaying, dragState]);
 
   const primarySelected = useMemo(() => {
     if (!activeScene || selectedElementIds.length === 0) return null;
@@ -295,6 +302,9 @@ export const StudioCanvasWorkspace: React.FC = () => {
 
           {/* Render All Scene Elements */}
           {evaluatedElements.map((el) => {
+            if (el.type === 'group') {
+              return null;
+            }
             const isSelected = selectedElementIds.includes(el.id);
             return (
               <div
@@ -344,6 +354,53 @@ export const StudioCanvasWorkspace: React.FC = () => {
             );
           })}
 
+          {/* Multi-Selection & Group Member Outlines */}
+          {activeScene.elements
+            .filter((el) => {
+              if (!el.visible || el.type === 'group') return false;
+              if (primarySelected && el.id === primarySelected.id) return false;
+              const isMultiSelected = selectedElementIds.includes(el.id);
+              const isSameGroup =
+                Boolean(primarySelected?.parentGroupId) &&
+                el.parentGroupId === primarySelected?.parentGroupId;
+              return isMultiSelected || isSameGroup;
+            })
+            .map((el) => (
+              <div
+                key={`group-outline-${el.id}`}
+                className="group-sibling-bounding-box"
+                style={{
+                  position: 'absolute',
+                  left: `${el.x}px`,
+                  top: `${el.y}px`,
+                  width: `${el.width}px`,
+                  height: `${el.height}px`,
+                  transform: `rotate(${el.rotation || 0}deg)`,
+                  border: '2px dashed #38bdf8',
+                  borderRadius: '4px',
+                  pointerEvents: 'none',
+                  zIndex: 9998,
+                }}
+              >
+                <span
+                  style={{
+                    position: 'absolute',
+                    top: '-20px',
+                    left: 0,
+                    background: 'rgba(14, 165, 233, 0.9)',
+                    color: '#fff',
+                    fontSize: '10px',
+                    fontWeight: 700,
+                    padding: '1px 6px',
+                    borderRadius: '3px',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {el.parentGroupId ? `🔗 ${el.name}` : el.name}
+                </span>
+              </div>
+            ))}
+
           {/* Dynamic Alignment Snap Guides */}
           {snapGuides.map((g, idx) =>
             g.orientation === 'vertical' ? (
@@ -374,6 +431,7 @@ export const StudioCanvasWorkspace: React.FC = () => {
               }}
             >
               <div className="selection-dimension-pill">
+                {primarySelected.parentGroupId ? '🔗 [GROUP] ' : ''}
                 {primarySelected.name} ({Math.round(primarySelected.width)} ×{' '}
                 {Math.round(primarySelected.height)})
               </div>

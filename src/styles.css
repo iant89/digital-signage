@@ -891,8 +891,14 @@ body,
   border-radius: 4px;
 }
 
+body.kiosk-lockout-active .app-global-nav {
+  display: none !important;
+}
+
 .player-stage-wrapper {
   flex: 1;
+  width: 100%;
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -900,9 +906,17 @@ body,
   position: relative;
 }
 
-.player-aspect-frame {
+.player-scaled-bounds {
   position: relative;
-  transform-origin: center center;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.player-aspect-frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: top left;
   box-shadow: 0 0 60px rgba(0, 0, 0, 0.9);
   overflow: hidden;
   flex-shrink: 0;
@@ -1545,13 +1559,15 @@ body,
   display: flex;
   align-items: flex-end;
   gap: 2px;
+  user-select: none;
+  cursor: crosshair;
 }
 
 .audio-wf-bar {
   flex: 1;
   border-radius: 2px;
   background: #38bdf8;
-  cursor: pointer;
+  cursor: ew-resize;
   transition: all 0.12s ease;
 }
 
@@ -1568,6 +1584,12 @@ body,
 .audio-wf-bar.deleted-cut {
   background: #f43f5e;
   opacity: 0.25;
+}
+
+.audio-wf-bar.current-playhead-bar {
+  background: #ef4444 !important;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.9) !important;
+  opacity: 1 !important;
 }
 
 .inspector-grid-3 {

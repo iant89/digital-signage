@@ -61,6 +61,8 @@ export const StudioLeftSidebar: React.FC = () => {
     addElement,
     updateElement,
     reorderLayer,
+    groupSelected,
+    ungroupSelected,
     addScene,
     duplicateScene,
     deleteScene,
@@ -783,11 +785,35 @@ export const StudioLeftSidebar: React.FC = () => {
         {/* TAB 4: LAYER HIERARCHY */}
         {activeTab === 'layers' && activeScene && (
           <div className="layers-panel">
-            <div className="section-header-row">
+            <div className="section-header-row" style={{ flexWrap: 'wrap', gap: '6px' }}>
               <span>Scene Layers (Top → Bottom)</span>
+              <div style={{ display: 'flex', gap: '4px' }}>
+                <button
+                  className="btn-xs"
+                  disabled={selectedElementIds.length < 2}
+                  onClick={() => groupSelected()}
+                  title="Group selected layers so they move, resize, and rotate together"
+                >
+                  Group ({selectedElementIds.length})
+                </button>
+                <button
+                  className="btn-xs"
+                  disabled={
+                    !selectedElementIds.some((id) => {
+                      const found = activeScene.elements.find((e) => e.id === id);
+                      return Boolean(found && (found.parentGroupId || found.type === 'group'));
+                    })
+                  }
+                  onClick={() => ungroupSelected()}
+                  title="Ungroup selected layers"
+                >
+                  Ungroup
+                </button>
+              </div>
             </div>
             <div className="layer-list">
               {[...activeScene.elements]
+                .filter((el) => el.type !== 'group')
                 .sort((a, b) => b.zIndex - a.zIndex)
                 .map((el) => {
                   const isSelected = selectedElementIds.includes(el.id);
@@ -807,8 +833,23 @@ export const StudioLeftSidebar: React.FC = () => {
                         }
                       }}
                     >
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        title="Toggle multi-select for grouping"
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={() => {
+                          setSelectedElementIds(
+                            isSelected
+                              ? selectedElementIds.filter((id) => id !== el.id)
+                              : [...selectedElementIds, el.id]
+                          );
+                        }}
+                      />
                       <span className="layer-type-badge">{el.type.slice(0, 3).toUpperCase()}</span>
-                      <span className="layer-name">{el.name}</span>
+                      <span className="layer-name">
+                        {el.parentGroupId ? `🔗 ${el.name}` : el.name}
+                      </span>
                       <div
                         className="layer-controls"
                         onClick={(e) => e.stopPropagation()}

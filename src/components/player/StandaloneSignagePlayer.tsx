@@ -4,7 +4,7 @@
 // Authentication, Offline Cache Operation & Watchdog Recovery (Spec Sec 8 & 10)
 // ============================================================================
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Maximize2,
   Minimize2,
@@ -23,6 +23,7 @@ import {
   QrCode,
   Smartphone,
   Volume2,
+  KeyRound,
 } from 'lucide-react';
 import { useStudioStore } from '@/store/useStudioStore';
 import {
@@ -39,10 +40,29 @@ import {
   SynchronizedSessionConfig,
   evaluateAuthoritativeTimeline,
 } from '@packages/playback-engine';
+import {
+  MaintenanceSequenceTracker,
+  matchesMaintenanceHotkey,
+} from '@packages/kiosk-integration';
 import { resolveActivePlaylist } from '@packages/playlist-engine';
 import { extractProjectFromArchive } from '@packages/signage-format';
 import { SignageElementRenderer } from '@/components/shared/SignageElementRenderer';
 import { formatDurationMs } from '@packages/shared';
+
+function formatKeySequenceBadge(seq: string): string {
+  return seq
+    .split(',')
+    .map((k) => {
+      const clean = k.trim();
+      const lower = clean.toLowerCase();
+      if (lower === 'arrowup') return '↑';
+      if (lower === 'arrowdown') return '↓';
+      if (lower === 'arrowleft') return '←';
+      if (lower === 'arrowright') return '→';
+      return clean.toUpperCase();
+    })
+    .join(' ');
+}
 
 export const StandaloneSignagePlayer: React.FC = () => {
   const {
@@ -72,6 +92,111 @@ export const StandaloneSignagePlayer: React.FC = () => {
   const [estimatedFps, setEstimatedFps] = useState(60);
   const [cornerTapCount, setCornerTapCount] = useState(0);
   const [showSetupQrModal, setShowSetupQrModal] = useState(false);
+  const [playerScaleMode, setPlayerScaleMode] = useState<
+    'auto-fit' | 'auto-fill' | 'stretch' | 'native'
+  >('auto-fit');
+  const [viewportSize, setViewportSize] = useState<{ width: number; height: number }>(() => ({
+    width: typeof window !== 'undefined' && window.innerWidth > 0 ? window.innerWidth : 1280,
+    height: typeof window !== 'undefined' && window.innerHeight > 0 ? window.innerHeight : 720,
+  }));
+  const [authTriggerSource, setAuthTriggerSource] = useState<string>('Maintenance Key Sequence');
+  const [sequenceProgress, setSequenceProgress] = useState<{
+    current: number;
+    total: number;
+    label: string;
+  } | null>(null);
+  const [kioskOsdHint, setKioskOsdHint] = useState<string | null>(null);
+
+  const playerContainerRef = useRef<HTMLDivElement | null>(null);
+  const stageWrapperRef = useRef<HTMLDivElement | null>(null);
+  const sessionStartRef = useRef<number>(Date.now());
+  const wasInMaintenanceSessionRef = useRef<boolean>(false);
+  const cornerTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const osdHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const seqClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const primarySeqTrackerRef = useRef<MaintenanceSequenceTracker>(
+    new MaintenanceSequenceTracker(
+      kioskConfig.maintenanceKeySequence ||
+        'ArrowUp,ArrowUp,ArrowDown,ArrowDown,ArrowLeft,ArrowRight'
+    )
+  );
+  const wordSeqTrackerRef = useRef<MaintenanceSequenceTracker>(
+    new MaintenanceSequenceTracker('m,a,i,n,t')
+  );
+
+  const showTransientOsd = useCallback((msg: string, durationMs = 3600) => {
+    setKioskOsdHint(msg);
+    if (osdHintTimerRef.current) {
+      clearTimeout(osdHintTimerRef.current);
+    }
+    osdHintTimerRef.current = setTimeout(() => {
+      setKioskOsdHint(null);
+    }, durationMs);
+  }, []);
+
+  useEffect(() => {
+    primarySeqTrackerRef.current.setSequence(
+      kioskConfig.maintenanceKeySequence ||
+        'ArrowUp,ArrowUp,ArrowDown,ArrowDown,ArrowLeft,ArrowRight'
+    );
+  }, [kioskConfig.maintenanceKeySequence]);
+
+  // Hide global studio top nav when Kiosk Lockout is engaged so player fills 100% of screen
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      document.body.classList.toggle('kiosk-lockout-active', kioskLocked);
+    }
+    return () => {
+      if (typeof document !== 'undefined') {
+        document.body.classList.remove('kiosk-lockout-active');
+      }
+    };
+  }, [kioskLocked]);
+
+  // Measure available stage viewport dimensions and auto-update on window/container resize
+  const updateStageDimensions = useCallback(() => {
+    const el = stageWrapperRef.current;
+    if (el && el.clientWidth > 0 && el.clientHeight > 0) {
+      setViewportSize({
+        width: el.clientWidth,
+        height: el.clientHeight,
+      });
+      return;
+    }
+    if (typeof window !== 'undefined') {
+      const fallbackW = Math.max(320, window.innerWidth || 1280);
+      const chromeOffset = kioskLocked || isFullscreen ? 0 : 124;
+      const fallbackH = Math.max(200, (window.innerHeight || 720) - chromeOffset);
+      setViewportSize({ width: fallbackW, height: fallbackH });
+    }
+  }, [kioskLocked, isFullscreen]);
+
+  useEffect(() => {
+    updateStageDimensions();
+    const raf = requestAnimationFrame(() => updateStageDimensions());
+    window.addEventListener('resize', updateStageDimensions);
+    document.addEventListener('fullscreenchange', updateStageDimensions);
+
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined' && stageWrapperRef.current) {
+      observer = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          const { width, height } = entry.contentRect;
+          if (width > 0 && height > 0) {
+            setViewportSize({ width: Math.round(width), height: Math.round(height) });
+          }
+        }
+      });
+      observer.observe(stageWrapperRef.current);
+    }
+
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('resize', updateStageDimensions);
+      document.removeEventListener('fullscreenchange', updateStageDimensions);
+      if (observer) observer.disconnect();
+    };
+  }, [updateStageDimensions, kioskLocked, isFullscreen]);
 
   const setupQrPayload = useMemo<PlayerSetupQrPayload>(() => {
     const payload: PlayerSetupQrPayload = {
@@ -95,9 +220,6 @@ export const StandaloneSignagePlayer: React.FC = () => {
     () => buildEnrollmentQrMatrix(setupQrUri),
     [setupQrUri]
   );
-
-  const playerContainerRef = useRef<HTMLDivElement | null>(null);
-  const sessionStartRef = useRef<number>(Date.now());
 
   // Reconstruct playable project strictly from the binary .signage archive
   const loadedPackageData = useMemo(() => {
@@ -148,17 +270,143 @@ export const StandaloneSignagePlayer: React.FC = () => {
     return () => cancelAnimationFrame(rafId);
   }, [isPlaying, watchdogState.state, watchdogSupervisor]);
 
-  // Maintenance session expiration ticker
+  // Maintenance session expiration ticker (automatically re-locks kiosk when timer reaches 0)
   useEffect(() => {
     const timer = setInterval(() => {
       const rem = adminController.getRemainingMaintenanceSeconds();
       setMaintenanceRemainingSec(rem);
-      if (rem === 0 && !kioskLocked) {
-        // Maintenance session expired
+      if (wasInMaintenanceSessionRef.current && rem === 0) {
+        wasInMaintenanceSessionRef.current = false;
+        setKioskLocked(true);
+        showTransientOsd(
+          `Maintenance session expired — Kiosk Lockout re-engaged (${kioskConfig.maintenanceHotkey} to unlock)`
+        );
       }
     }, 1000);
     return () => clearInterval(timer);
-  }, [adminController, kioskLocked]);
+  }, [adminController, kioskConfig.maintenanceHotkey, showTransientOsd]);
+
+  // Real Signage Player Maintenance Key Sequence & Hotkey Chord Listener (Spec Section 10.4)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isInput =
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable);
+
+      if (isInput) return;
+
+      if (!kioskConfig.maintenanceAccessEnabled) {
+        if (kioskLocked) {
+          e.preventDefault();
+        }
+        return;
+      }
+
+      const configuredHotkey = kioskConfig.maintenanceHotkey || 'Ctrl+Shift+M';
+      // 1. Check Maintenance Hotkey Chord (e.g., Ctrl+Shift+M or Ctrl+Alt+M)
+      if (
+        matchesMaintenanceHotkey(e, configuredHotkey) ||
+        matchesMaintenanceHotkey(e, 'Ctrl+Alt+M')
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        setCursorHidden(false);
+        setSequenceProgress(null);
+        setAuthTriggerSource(`Hotkey Chord (${configuredHotkey})`);
+        setAuthError('');
+        setShowAuthModal(true);
+        return;
+      }
+
+      // 2. Check Multi-Key Sequential Maintenance Sequence (e.g., ↑ ↑ ↓ ↓ ← → or M-A-I-N-T)
+      if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+        const primaryRes = primarySeqTrackerRef.current.feedKey(e.key);
+        const wordRes = wordSeqTrackerRef.current.feedKey(e.key);
+
+        if (primaryRes.matched || wordRes.matched) {
+          e.preventDefault();
+          e.stopPropagation();
+          primarySeqTrackerRef.current.reset();
+          wordSeqTrackerRef.current.reset();
+          setSequenceProgress(null);
+          setCursorHidden(false);
+          setAuthTriggerSource(
+            primaryRes.matched
+              ? `Key Sequence (${formatKeySequenceBadge(
+                  kioskConfig.maintenanceKeySequence ||
+                    'ArrowUp,ArrowUp,ArrowDown,ArrowDown,ArrowLeft,ArrowRight'
+                )})`
+              : 'Key Sequence (M A I N T)'
+          );
+          setAuthError('');
+          setShowAuthModal(true);
+          return;
+        }
+
+        const activeProg =
+          primaryRes.progress >= wordRes.progress
+            ? {
+                current: primaryRes.progress,
+                total: primaryRes.total,
+                label: formatKeySequenceBadge(
+                  kioskConfig.maintenanceKeySequence ||
+                    'ArrowUp,ArrowUp,ArrowDown,ArrowDown,ArrowLeft,ArrowRight'
+                ),
+              }
+            : {
+                current: wordRes.progress,
+                total: wordRes.total,
+                label: 'M A I N T',
+              };
+
+        if (activeProg.current >= 2) {
+          e.preventDefault();
+          setSequenceProgress(activeProg);
+          if (seqClearTimerRef.current) clearTimeout(seqClearTimerRef.current);
+          seqClearTimerRef.current = setTimeout(() => {
+            setSequenceProgress(null);
+          }, 3500);
+          return;
+        } else if (sequenceProgress) {
+          setSequenceProgress(null);
+        }
+      }
+
+      // 3. When Kiosk Lockout is active, intercept escape/refresh shortcuts and display a brief OSD reminder
+      if (kioskLocked && !showAuthModal) {
+        if (
+          e.key === 'Escape' ||
+          e.key === 'F11' ||
+          e.key === 'F5' ||
+          ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'r' || e.key.toLowerCase() === 'w'))
+        ) {
+          e.preventDefault();
+          e.stopPropagation();
+          showTransientOsd(
+            `Kiosk Locked • Press ${configuredHotkey} or key sequence [${formatKeySequenceBadge(
+              kioskConfig.maintenanceKeySequence ||
+                'ArrowUp,ArrowUp,ArrowDown,ArrowDown,ArrowLeft,ArrowRight'
+            )}] for Maintenance Access`
+          );
+        }
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [
+    kioskConfig.maintenanceAccessEnabled,
+    kioskConfig.maintenanceHotkey,
+    kioskConfig.maintenanceKeySequence,
+    kioskLocked,
+    showAuthModal,
+    sequenceProgress,
+    showTransientOsd,
+  ]);
 
   // Cursor inactivity auto-hide in Kiosk Lockout mode
   useEffect(() => {
@@ -218,12 +466,40 @@ export const StandaloneSignagePlayer: React.FC = () => {
   };
 
   const handleCornerSecretGesture = () => {
+    if (!kioskConfig.maintenanceAccessEnabled) return;
+    if (cornerTapTimerRef.current) {
+      clearTimeout(cornerTapTimerRef.current);
+    }
     const next = cornerTapCount + 1;
-    setCornerTapCount(next);
     if (next >= 5) {
       setCornerTapCount(0);
+      setCursorHidden(false);
+      setAuthTriggerSource('5-Tap Top-Right Corner Gesture');
+      setAuthError('');
       setShowAuthModal(true);
+    } else {
+      setCornerTapCount(next);
+      if (next >= 3) {
+        showTransientOsd(`Maintenance Corner Gesture: ${next} / 5 taps`, 2200);
+      }
+      cornerTapTimerRef.current = setTimeout(() => {
+        setCornerTapCount(0);
+      }, 4000);
     }
+  };
+
+  const handleEngageKioskLockout = () => {
+    adminController.exitMaintenanceSession();
+    wasInMaintenanceSessionRef.current = false;
+    setMaintenanceRemainingSec(0);
+    setKioskLocked(true);
+    showTransientOsd(
+      `Kiosk Lockout Engaged • Press ${kioskConfig.maintenanceHotkey || 'Ctrl+Shift+M'}, sequence [${formatKeySequenceBadge(
+        kioskConfig.maintenanceKeySequence ||
+          'ArrowUp,ArrowUp,ArrowDown,ArrowDown,ArrowLeft,ArrowRight'
+      )}], or 5-tap top-right corner for Maintenance Access`,
+      4200
+    );
   };
 
   const handleAuthenticateAdmin = (e: React.FormEvent) => {
@@ -234,11 +510,16 @@ export const StandaloneSignagePlayer: React.FC = () => {
     );
     if (res.granted) {
       setKioskLocked(false);
+      wasInMaintenanceSessionRef.current = true;
       setShowAuthModal(false);
       setAdminPassphrase('');
       setAuthError('');
+      setKioskOsdHint(null);
       setMaintenanceRemainingSec(adminController.getRemainingMaintenanceSeconds());
-      notify('success', 'Maintenance access granted. Kiosk lockout temporarily lifted.');
+      notify(
+        'success',
+        `Maintenance access granted via ${authTriggerSource} (${kioskConfig.maintenanceSessionDurationSec}s session).`
+      );
     } else {
       setAuthError(res.reason);
     }
@@ -301,6 +582,42 @@ export const StandaloneSignagePlayer: React.FC = () => {
         timelineState.sceneDurationMs
       ),
     }));
+
+  // Compute dynamic viewport auto-scaling for the Signage Player stage
+  const sceneW = Math.max(1, project.settings.width || 1920);
+  const sceneH = Math.max(1, project.settings.height || 1080);
+  const stageMargin = kioskLocked || isFullscreen ? 0 : 20;
+  const availW = Math.max(120, viewportSize.width - stageMargin);
+  const availH = Math.max(90, viewportSize.height - stageMargin);
+  const rawScaleX = availW / sceneW;
+  const rawScaleY = availH / sceneH;
+
+  let scaleX = 1;
+  let scaleY = 1;
+  if (playerScaleMode === 'native') {
+    scaleX = 1;
+    scaleY = 1;
+  } else if (playerScaleMode === 'stretch') {
+    scaleX = Math.max(0.05, rawScaleX);
+    scaleY = Math.max(0.05, rawScaleY);
+  } else if (playerScaleMode === 'auto-fill') {
+    const uniformFill = Math.max(0.05, Math.max(rawScaleX, rawScaleY));
+    scaleX = uniformFill;
+    scaleY = uniformFill;
+  } else {
+    // 'auto-fit' (default: scales scene proportionally to fit the viewport)
+    const uniformFit = Math.max(0.05, Math.min(rawScaleX, rawScaleY));
+    scaleX = uniformFit;
+    scaleY = uniformFit;
+  }
+
+  const scaledBoxWidth = Math.max(1, Math.round(sceneW * scaleX));
+  const scaledBoxHeight = Math.max(1, Math.round(sceneH * scaleY));
+  const scalePercentLabel = `${Math.round(scaleX * 100)}%`;
+  const formattedSeqLabel = formatKeySequenceBadge(
+    kioskConfig.maintenanceKeySequence ||
+      'ArrowUp,ArrowUp,ArrowDown,ArrowDown,ArrowLeft,ArrowRight'
+  );
 
   return (
     <div
@@ -380,6 +697,22 @@ export const StandaloneSignagePlayer: React.FC = () => {
               {formatDurationMs(timelineState.sceneDurationMs)})
             </span>
             <span className="hud-metric">{estimatedFps} FPS</span>
+            <select
+              className="toolbar-select"
+              aria-label="Player Viewport Scaling Mode"
+              value={playerScaleMode}
+              onChange={(e) =>
+                setPlayerScaleMode(
+                  e.target.value as 'auto-fit' | 'auto-fill' | 'stretch' | 'native'
+                )
+              }
+              title="Auto-scale scene to player viewport"
+            >
+              <option value="auto-fit">Auto-Fit Viewport ({scalePercentLabel})</option>
+              <option value="auto-fill">Auto-Fill Viewport ({scalePercentLabel})</option>
+              <option value="stretch">Stretch to Viewport</option>
+              <option value="native">100% Native ({sceneW}×{sceneH})</option>
+            </select>
             {activeAudioStatuses.length > 0 && (
               <span
                 className="hud-metric"
@@ -440,11 +773,8 @@ export const StandaloneSignagePlayer: React.FC = () => {
 
             <button
               className="btn-xs"
-              onClick={() => {
-                adminController.exitMaintenanceSession();
-                setKioskLocked(true);
-              }}
-              title="Engage Kiosk Lockout (Hides Chrome & Requires Admin Auth to Exit)"
+              onClick={handleEngageKioskLockout}
+              title={`Engage Kiosk Lockout (Unlock with ${kioskConfig.maintenanceHotkey || 'Ctrl+Shift+M'} or [${formattedSeqLabel}])`}
             >
               <Lock size={13} /> Engage Kiosk Lockout
             </button>
@@ -456,13 +786,25 @@ export const StandaloneSignagePlayer: React.FC = () => {
         </div>
       )}
 
-      {/* Subtle Floating Unlock Pill when in Kiosk Lockout Mode */}
-      {kioskLocked && (
-        <div className="kiosk-locked-floating-indicator">
-          <Lock size={12} /> KIOSK LOCKOUT ACTIVE •{' '}
-          <button className="link-btn" onClick={() => setShowAuthModal(true)}>
-            Admin Maintenance Unlock
-          </button>
+      {/* Transient Kiosk OSD Banner & Live Key-Sequence Progress Indicator (Auto-Hides Like a Real Signage Player) */}
+      {(kioskOsdHint || sequenceProgress) && (
+        <div
+          className="kiosk-locked-floating-indicator"
+          role="status"
+          aria-live="polite"
+        >
+          <KeyRound size={13} color="#38bdf8" />
+          {sequenceProgress ? (
+            <span>
+              Maintenance Key Sequence (<code>{sequenceProgress.label}</code>):{' '}
+              <strong>
+                {sequenceProgress.current} / {sequenceProgress.total}
+              </strong>{' '}
+              keys matched
+            </span>
+          ) : (
+            <span>{kioskOsdHint}</span>
+          )}
         </div>
       )}
 
@@ -482,34 +824,53 @@ export const StandaloneSignagePlayer: React.FC = () => {
           </div>
         </div>
       ) : (
-        /* Main Scaled Signage Presentation Viewport */
-        <div className="player-stage-wrapper">
+        /* Main Auto-Scaled Signage Presentation Viewport */
+        <div ref={stageWrapperRef} className="player-stage-wrapper">
           <div
-            className="player-aspect-frame"
+            className="player-scaled-bounds"
             style={{
-              width: `${project.settings.width}px`,
-              height: `${project.settings.height}px`,
-              background:
-                activeScene.backgroundGradient || activeScene.backgroundColor || '#090d16',
-              opacity: timelineState.transitionStyle.opacity,
-              transform: `scale(var(--player-scale, 0.62)) ${
-                timelineState.transitionStyle.transform !== 'none'
-                  ? timelineState.transitionStyle.transform
-                  : ''
-              }`,
-              clipPath: timelineState.transitionStyle.clipPath,
+              width: `${scaledBoxWidth}px`,
+              height: `${scaledBoxHeight}px`,
+              position: 'relative',
+              flexShrink: 0,
             }}
           >
-            {timelineState.elements.map((el) => (
-              <SignageElementRenderer
-                key={el.id}
-                element={el}
-                assets={project.assets}
-                currentTimeMs={timelineState.sceneElapsedMs}
-                deviceName={kioskConfig.deviceName}
-                sceneName={activeScene.name}
-              />
-            ))}
+            <div
+              className="player-aspect-frame"
+              data-scale-mode={playerScaleMode}
+              data-scale-x={scaleX.toFixed(4)}
+              data-scale-y={scaleY.toFixed(4)}
+              style={
+                {
+                  width: `${sceneW}px`,
+                  height: `${sceneH}px`,
+                  background:
+                    activeScene.backgroundGradient || activeScene.backgroundColor || '#090d16',
+                  opacity: timelineState.transitionStyle.opacity,
+                  transformOrigin: 'top left',
+                  '--player-scale': scaleX.toFixed(4),
+                  transform: `scale(${scaleX.toFixed(4)}, ${scaleY.toFixed(4)}) ${
+                    timelineState.transitionStyle.transform !== 'none'
+                      ? timelineState.transitionStyle.transform
+                      : ''
+                  }`,
+                  clipPath: timelineState.transitionStyle.clipPath,
+                } as React.CSSProperties
+              }
+            >
+              {timelineState.elements
+                .filter((el) => el.type !== 'group')
+                .map((el) => (
+                  <SignageElementRenderer
+                    key={el.id}
+                    element={el}
+                    assets={project.assets}
+                    currentTimeMs={timelineState.sceneElapsedMs}
+                    deviceName={kioskConfig.deviceName}
+                    sceneName={activeScene.name}
+                  />
+                ))}
+            </div>
           </div>
         </div>
       )}
@@ -518,14 +879,28 @@ export const StandaloneSignagePlayer: React.FC = () => {
       {!kioskLocked && (
         <div className="player-bottom-telemetry">
           <span>
-            <strong>Schedule:</strong> {resolvedSchedule?.reason}
+            <strong>Schedule:</strong> {resolvedSchedule?.reason} •{' '}
+            <strong>Viewport Scale:</strong> {scalePercentLabel} ({sceneW}×{sceneH} →{' '}
+            {scaledBoxWidth}×{scaledBoxHeight}px)
           </span>
           <span>
-            <strong>Watchdog:</strong> {watchdogState.state} (Restarts: {watchdogState.restartCount})
+            <strong>Maintenance Sequence:</strong>{' '}
+            <code>{kioskConfig.maintenanceHotkey || 'Ctrl+Shift+M'}</code> or{' '}
+            <code>{formattedSeqLabel}</code> • <strong>Watchdog:</strong> {watchdogState.state}
           </span>
           {maintenanceRemainingSec > 0 && (
-            <span style={{ color: '#38bdf8' }}>
-              <Unlock size={12} /> Maintenance Session Auto-Locks in {maintenanceRemainingSec}s
+            <span style={{ color: '#38bdf8', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+              <span>
+                <Unlock size={12} /> Maintenance Session Auto-Locks in {maintenanceRemainingSec}s
+              </span>
+              <button
+                type="button"
+                className="btn-xs"
+                onClick={handleEngageKioskLockout}
+                title="Immediately end maintenance session and re-lock kiosk"
+              >
+                Relock Now
+              </button>
             </span>
           )}
         </div>
@@ -543,8 +918,9 @@ export const StandaloneSignagePlayer: React.FC = () => {
               <Lock size={16} /> Protected Kiosk Maintenance Authentication
             </h4>
             <p className="muted-line">
-              Enter the device-bound administrator passphrase to unlock maintenance controls for a
-              time-limited session ({kioskConfig.maintenanceSessionDurationSec}s).
+              Triggered via <strong>{authTriggerSource}</strong>. Enter the device-bound
+              administrator passphrase to unlock maintenance controls for a time-limited session (
+              {kioskConfig.maintenanceSessionDurationSec}s).
             </p>
             <p className="muted-line" style={{ color: '#38bdf8' }}>
               Default Provisioned Admin Passphrase: <code>ApexAdmin!2026</code>
@@ -552,6 +928,7 @@ export const StandaloneSignagePlayer: React.FC = () => {
             <input
               type="password"
               className="inspector-input"
+              aria-label="Administrator Passphrase"
               placeholder="Administrator passphrase..."
               value={adminPassphrase}
               onChange={(e) => setAdminPassphrase(e.target.value)}

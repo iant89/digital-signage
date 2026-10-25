@@ -109,6 +109,42 @@
   - Updated `computeSceneElementsAtTime` to group tracks per `(elementId, property)` sorted by `delayMs` ascending so sequential motions on the same object only take over when the timeline reaches their `delayMs` start time.
   - Added **Start Time (`ms`)** and **Start Frame (`@ FPS`)** inputs, **Snap to Playhead**, **Rotation Angle (`°`)** slider/input (`rotationAngleDeg`), **Slide Distance (`px`)**, **Scale Factor**, and **Start/End Value** editors in `StudioRightInspector.tsx`, plus inline start time/frame inputs and horizontal span dragging on `StudioBottomTimeline.tsx`.
 
+### [2026-10-25 — Session 08] Audio Waveform Click-and-Drag Section Selector & Red Preview Playhead Bar
+
+- **Interactive Audio Waveform Section Selector (`src/components/studio/StudioAudioEditorModal.tsx`, `src/styles.css`)**:
+  - Replaced single-click bar toggling with natural mouse/pointer drag selection (`waveformDrag` modes: `'new'`, `'resize-start'`, `'resize-end'`).
+  - **Click and drag** sweeps out a new selection range (`[selectionStartMs, selectionEndMs]`).
+  - Once a section is selected, **clicking on the right side and dragging** moves the **end** of the selection (`selectionEndMs`), while **clicking on the left side and dragging** moves the **start** of the selection (`selectionStartMs`).
+  - **Clicking outside** the selection (without dragging) or **double-clicking** anywhere on the waveform unselects everything (`hasSelection = false`).
+- **Red Audio Preview Position Bar (`activePlayheadBarIndex`, `.current-playhead-bar`)**:
+  - During audio preview playback (`isPreviewPlaying`), `previewPositionMs` tracks the current playback position across the active crop window (`trimStartMs` .. `trimEndMs`) and highlights the corresponding waveform bar in **red** (`#ef4444`, `.current-playhead-bar`).
+
+### [2026-10-25 — Session 09] Synchronized Component Grouping & Slide-In Actual Position Fix in Scene Designer
+
+- **Synchronized Component Grouping (`packages/editor-core/index.ts`, `src/store/useStudioStore.ts`, `StudioTopToolbar.tsx`, `StudioLeftSidebar.tsx`, `StudioRightInspector.tsx`, `StudioCanvasWorkspace.tsx`)**:
+  - Added `ungroupElements` and `applyElementOrGroupUpdate` in `packages/editor-core/index.ts`.
+  - When any component belonging to a group (`el.parentGroupId`) is moved (`x`, `y`), resized (`width`, `height`, `x`, `y`), or rotated (`rotation`) on the canvas or in the Inspector, all components in that group move by `(dx, dy)`, scale proportionally in dimensions and relative offsets, and rotate by `dRot` together.
+  - Added Group and Ungroup controls in the Top Toolbar, Left Sidebar Layers tab (with multi-select checkboxes and `🔗` badges), and Right Inspector (**Component Grouping (Sync Transform)** section with one-click quick grouping).
+  - Animations (`scene.animationTracks`) that affect position, size, or rotation remain strictly scoped to their individual `elementId` in `computeSceneElementsAtTime` and never affect other objects in the group.
+- **Slide-In / Motion Objects in Actual Position in Scene Designer (`StudioCanvasWorkspace.tsx`, `packages/editor-core/index.ts`, `useStudioStore.ts`)**:
+  - Updated `StudioCanvasWorkspace.tsx` so that whenever `!timelinePlaying || dragState !== null`, elements render at their actual authored positions/sizes/rotations (`activeScene.elements`) instead of being stuck at `t = 0` start offsets of `slide-left`/`slide-right`/`slide-up`/`slide-down` animations.
+  - Updated `applyAnimationPreset` so adding a preset in the Scene Designer does not force `timelinePlaying: true`.
+  - Updated `applyElementOrGroupUpdate` so moving or rotating an animated object in the Scene Designer shifts its own `x`, `y`, and `rotation` animation track keyframes by the same delta so slide-in animations always land at the object's new actual position.
+
+### [2026-10-25 — Session 10] Signage Player Viewport Auto-Scaling & Real Maintenance Key Sequence
+
+- **Dynamic Player Viewport Auto-Scaling (`src/components/player/StandaloneSignagePlayer.tsx`, `src/styles.css`)**:
+  - Replaced hardcoded `scale(var(--player-scale, 0.62))` with live viewport measurement using `ResizeObserver` on `.player-stage-wrapper`, `window.resize`, and `fullscreenchange`.
+  - Added `.player-scaled-bounds` (`width = sceneW * scaleX`, `height = sceneH * scaleY`) with `.player-aspect-frame` (`transformOrigin: 'top left'`) so layout and visual bounds match 1:1 and center cleanly at any resolution.
+  - Added a HUD scaling mode selector (`Auto-Fit Viewport`, `Auto-Fill Viewport`, `Stretch to Viewport`, `100% Native`) displaying the real-time scale percentage.
+- **Real Player Maintenance Key Sequence & Kiosk Lockout Lifecycle (`packages/kiosk-integration/index.ts`, `StandaloneSignagePlayer.tsx`, `DeviceAdminView.tsx`)**:
+  - Implemented `matchesMaintenanceHotkey` (for chords like `Ctrl+Shift+M` / `Ctrl+Alt+M`) and `MaintenanceSequenceTracker` (for multi-key hardware/remote sequences like `ArrowUp,ArrowUp,ArrowDown,ArrowDown,ArrowLeft,ArrowRight` and `m,a,i,n,t` with a 3.5s inter-key timeout).
+  - Engaging Kiosk Lockout sets `body.kiosk-lockout-active` (hiding the global studio header as well as the player HUD so the signage scene fills 100% of the viewport cleanly without a permanent floating unlock button), shows a brief transient OSD hint that auto-fades, blocks `Escape`/`F5`/`Ctrl+R`, and opens the **Protected Kiosk Maintenance Authentication** modal when the hotkey chord, sequential key sequence, or 5-tap top-right corner gesture is triggered.
+  - Automatically re-engages Kiosk Lockout when the time-limited maintenance session (`maintenanceRemainingSec`) expires.
+
+
+
+
 
 
 ---

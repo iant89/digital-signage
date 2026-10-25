@@ -21,11 +21,13 @@ import {
   DistributionMode,
   LayerOrderAction,
   alignElements,
+  applyElementOrGroupUpdate,
   distributeElements,
   groupElements,
   loadProjectPersistence,
   reorderElementLayer,
   saveProjectPersistence,
+  ungroupElements,
 } from '@packages/editor-core';
 import {
   PresetAnimationOptions,
@@ -127,7 +129,8 @@ export interface StudioState {
   alignSelected: (mode: AlignmentMode) => void;
   distributeSelected: (mode: DistributionMode) => void;
   reorderLayer: (elementId: string, action: LayerOrderAction) => void;
-  groupSelected: () => void;
+  groupSelected: (elementIds?: string[]) => void;
+  ungroupSelected: (elementIds?: string[]) => void;
 
   applyAnimationPreset: (
     elementId: string,
@@ -455,17 +458,28 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     if (recordUndo) {
       get().commitProjectChange('Update Element', (draft) => {
         const scene = draft.scenes.find((s) => s.id === activeSceneId);
-        const el = scene?.elements.find((e) => e.id === elementId);
-        if (el) {
-          Object.assign(el, partial);
-        }
+        if (!scene) return;
+        const updated = applyElementOrGroupUpdate(
+          scene.elements,
+          scene.animationTracks,
+          elementId,
+          partial
+        );
+        scene.elements = updated.elements;
+        scene.animationTracks = updated.animationTracks;
       });
     } else {
       const next = deepClone(get().project);
       const scene = next.scenes.find((s) => s.id === activeSceneId);
-      const el = scene?.elements.find((e) => e.id === elementId);
-      if (el) {
-        Object.assign(el, partial);
+      if (scene) {
+        const updated = applyElementOrGroupUpdate(
+          scene.elements,
+          scene.animationTracks,
+          elementId,
+          partial
+        );
+        scene.elements = updated.elements;
+        scene.animationTracks = updated.animationTracks;
         set({ project: next });
       }
     }
@@ -585,9 +599,10 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     });
   },
 
-  groupSelected: () => {
+  groupSelected: (elementIds) => {
     const { activeSceneId, selectedElementIds } = get();
-    if (selectedElementIds.length < 2) {
+    const targetIds = elementIds && elementIds.length >= 2 ? elementIds : selectedElementIds;
+    if (targetIds.length < 2) {
       get().notify('info', 'Select at least 2 elements to group.');
       return;
     }
@@ -595,13 +610,26 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     get().commitProjectChange('Group Elements', (draft) => {
       const scene = draft.scenes.find((s) => s.id === activeSceneId);
       if (!scene) return;
-      const res = groupElements(scene.elements, selectedElementIds);
+      const res = groupElements(scene.elements, targetIds);
       scene.elements = res.elements;
       createdGroupId = res.groupId;
     });
     if (createdGroupId) {
-      set({ selectedElementIds: [createdGroupId] });
+      set({ selectedElementIds: targetIds });
+      get().notify('success', `Grouped ${targetIds.length} components together.`);
     }
+  },
+
+  ungroupSelected: (elementIds) => {
+    const { activeSceneId, selectedElementIds } = get();
+    const targetIds = elementIds && elementIds.length > 0 ? elementIds : selectedElementIds;
+    if (targetIds.length === 0) return;
+    get().commitProjectChange('Ungroup Elements', (draft) => {
+      const scene = draft.scenes.find((s) => s.id === activeSceneId);
+      if (!scene) return;
+      scene.elements = ungroupElements(scene.elements, targetIds);
+    });
+    get().notify('info', 'Ungrouped selected components.');
   },
 
   applyAnimationPreset: (elementId, preset, durationMs = 1000, options = {}) => {
@@ -619,7 +647,6 @@ export const useStudioStore = create<StudioState>((set, get) => ({
         scene.animationTracks.push(...tracks);
       }
     });
-    set({ timelineTimeMs: options.delayMs ?? 0, timelinePlaying: true });
   },
 
   clearElementTracks: (elementId) => {

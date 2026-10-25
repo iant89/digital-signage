@@ -98,8 +98,11 @@ export const StudioRightInspector: React.FC = () => {
     project,
     activeSceneId,
     selectedElementIds,
+    setSelectedElementIds,
     updateElement,
     updateScene,
+    groupSelected,
+    ungroupSelected,
     applyAnimationPreset,
     clearElementTracks,
     duplicateTrack,
@@ -501,6 +504,96 @@ export const StudioRightInspector: React.FC = () => {
                       />
                     </div>
                   </div>
+                </div>
+
+                {/* COMPONENT GROUPING (SYNCHRONIZED MOVE / RESIZE / ROTATE) */}
+                <div className="inspector-section">
+                  <div className="palette-title">Component Grouping (Sync Transform)</div>
+                  {selectedElement.parentGroupId ? (
+                    <>
+                      <div className="muted-line" style={{ marginBottom: '6px' }}>
+                        🔗 Linked in Group (<code>{selectedElement.parentGroupId}</code>). Moving,
+                        resizing, or rotating any member transforms all members together. Animations
+                        remain scoped to their individual component.
+                      </div>
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          gap: '4px',
+                          marginBottom: '8px',
+                        }}
+                      >
+                        {activeScene?.elements
+                          .filter(
+                            (e) =>
+                              e.type !== 'group' &&
+                              e.parentGroupId === selectedElement.parentGroupId
+                          )
+                          .map((member) => (
+                            <button
+                              key={member.id}
+                              type="button"
+                              className={`btn-xs ${member.id === selectedElement.id ? 'active' : ''}`}
+                              onClick={() => setSelectedElementIds([member.id])}
+                              title={`Select group member: ${member.name}`}
+                            >
+                              {member.name}
+                            </button>
+                          ))}
+                      </div>
+                      <button
+                        type="button"
+                        className="btn-secondary full-width"
+                        onClick={() => ungroupSelected([selectedElement.id])}
+                      >
+                        Ungroup Components
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <div className="muted-line" style={{ marginBottom: '6px' }}>
+                        Group multiple components so moving, resizing, or rotating one transforms all
+                        grouped components together.
+                      </div>
+                      {selectedElementIds.length >= 2 ? (
+                        <button
+                          type="button"
+                          className="btn-primary full-width"
+                          onClick={() => groupSelected()}
+                        >
+                          Group Selected ({selectedElementIds.length} Components)
+                        </button>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          <label className="inspector-label">
+                            Quick Group With Scene Component
+                          </label>
+                          <select
+                            className="inspector-select"
+                            aria-label="Quick Group With Component"
+                            value=""
+                            onChange={(e) => {
+                              const partnerId = e.target.value;
+                              if (!partnerId) return;
+                              groupSelected([selectedElement.id, partnerId]);
+                            }}
+                          >
+                            <option value="">Select component to group with...</option>
+                            {activeScene?.elements
+                              .filter(
+                                (e) => e.id !== selectedElement.id && e.type !== 'group'
+                              )
+                              .map((other) => (
+                                <option key={other.id} value={other.id}>
+                                  {other.name} ({other.type})
+                                </option>
+                              ))}
+                          </select>
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
 
                 {/* TEXT SPECIFIC CONTROLS */}

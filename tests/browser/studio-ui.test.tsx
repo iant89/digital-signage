@@ -197,10 +197,75 @@ describe('Digital Signage Studio React UI Integration', () => {
     expect(combined.name).toBe('Combined Lobby Mix');
     expect(combined.durationMs).toBeGreaterThanOrEqual(10000);
 
-    // 3. Open the Simple Audio Editor modal from the Studio Timeline and delete a selected section
+    // 3. Open the Simple Audio Editor modal from the Studio Timeline and test interactive waveform selection & preview playhead
     render(<App />);
     fireEvent.click(screen.getAllByRole('button', { name: /Audio Editor/i })[0]);
     expect(screen.getByText(/Studio Audio Editor & Background Music Mixer/i)).toBeTruthy();
+
+    const waveformSelector = screen.getByLabelText(/Audio Waveform Selector/i);
+    const wfBars = waveformSelector.querySelectorAll('.audio-wf-bar');
+    expect(wfBars.length).toBe(64);
+
+    // Double-click unselects everything
+    fireEvent.doubleClick(waveformSelector);
+    expect(screen.getByText(/None \(Click & drag to select\)/i)).toBeTruthy();
+    expect(waveformSelector.querySelectorAll('.audio-wf-bar.in-selection').length).toBe(0);
+
+    // Click and drag from bar #10 to bar #30 to select a section
+    fireEvent.mouseDown(wfBars[10]);
+    fireEvent.mouseMove(wfBars[30]);
+    fireEvent.mouseUp(window);
+    const bar10Ms = Number(wfBars[10].getAttribute('data-bar-time-ms'));
+    const bar30Ms = Number(wfBars[30].getAttribute('data-bar-time-ms'));
+    expect((screen.getByLabelText(/Selection Start \(ms\)/i) as HTMLInputElement).value).toBe(
+      String(bar10Ms)
+    );
+    expect((screen.getByLabelText(/Selection End \(ms\)/i) as HTMLInputElement).value).toBe(
+      String(bar30Ms)
+    );
+
+    // Click on the right side of the selection (bar #26) and drag to bar #44 to move the end of the selection
+    fireEvent.mouseDown(wfBars[26]);
+    fireEvent.mouseMove(wfBars[44]);
+    fireEvent.mouseUp(window);
+    const bar44Ms = Number(wfBars[44].getAttribute('data-bar-time-ms'));
+    expect((screen.getByLabelText(/Selection Start \(ms\)/i) as HTMLInputElement).value).toBe(
+      String(bar10Ms)
+    );
+    expect((screen.getByLabelText(/Selection End \(ms\)/i) as HTMLInputElement).value).toBe(
+      String(bar44Ms)
+    );
+
+    // Click on the left side of the selection (bar #14) and drag to bar #4 to move the start of the selection
+    fireEvent.mouseDown(wfBars[14]);
+    fireEvent.mouseMove(wfBars[4]);
+    fireEvent.mouseUp(window);
+    const bar4Ms = Number(wfBars[4].getAttribute('data-bar-time-ms'));
+    expect((screen.getByLabelText(/Selection Start \(ms\)/i) as HTMLInputElement).value).toBe(
+      String(bar4Ms)
+    );
+    expect((screen.getByLabelText(/Selection End \(ms\)/i) as HTMLInputElement).value).toBe(
+      String(bar44Ms)
+    );
+
+    // Click outside the selection (bar #58) without dragging to unselect everything
+    fireEvent.mouseDown(wfBars[58]);
+    fireEvent.mouseUp(window);
+    expect(screen.getByText(/None \(Click & drag to select\)/i)).toBeTruthy();
+
+    // Re-select a range and test Delete Selected Section + Combine Tracks
+    fireEvent.mouseDown(wfBars[12]);
+    fireEvent.mouseMove(wfBars[28]);
+    fireEvent.mouseUp(window);
+
+    // Preview the audio and verify the current position bar changes color to red (.current-playhead-bar)
+    fireEvent.click(screen.getByRole('button', { name: /Play Audio Preview/i }));
+    const playheadBar = waveformSelector.querySelector(
+      '.audio-wf-bar.current-playhead-bar'
+    ) as HTMLElement | null;
+    expect(playheadBar).toBeTruthy();
+    expect(playheadBar?.style.backgroundColor).toBe('rgb(239, 68, 68)');
+    fireEvent.click(screen.getByRole('button', { name: /Stop Preview/i }));
 
     const deleteSectionBtn = screen.getByRole('button', { name: /Delete Selected Section/i });
     fireEvent.click(deleteSectionBtn);
@@ -296,6 +361,176 @@ describe('Digital Signage Studio React UI Integration', () => {
       2500
     ).find((e) => e.id === wayfindingEl.id);
     expect(computedAt2500?.rotation).toBeCloseTo(270, 1);
+  });
+
+  it('keeps slide-in animated objects in their actual position in the Scene Designer and synchronizes grouped components on move/resize/rotate', () => {
+    act(() => {
+      useStudioStore.getState().resetToStarterProject();
+      useStudioStore.getState().setAppMode('studio');
+    });
+    render(<App />);
+
+    const state0 = useStudioStore.getState();
+    expect(state0.timelinePlaying).toBe(false);
+    const firstEl = state0.project.scenes[0].elements[0];
+    const secondEl = state0.project.scenes[0].elements[1];
+    expect(firstEl).toBeTruthy();
+    expect(secondEl).toBeTruthy();
+
+    const actualFirstX = firstEl.x;
+    act(() => {
+      useStudioStore.getState().applyAnimationPreset(firstEl.id, 'slide-left', 1000, {
+        distancePx: 420,
+        replaceExisting: true,
+      });
+    });
+
+    // Ensure applying an animation preset does NOT force timelinePlaying on in the designer
+    expect(useStudioStore.getState().timelinePlaying).toBe(false);
+
+    // Select the first element and verify its rendered DOM selection box on the canvas is at actualFirstX
+    act(() => {
+      useStudioStore.getState().setSelectedElementIds([firstEl.id]);
+    });
+    const selectionBox = document.querySelector('.selection-bounding-box') as HTMLElement;
+    expect(selectionBox).toBeTruthy();
+    expect(selectionBox.style.left).toBe(`${actualFirstX}px`);
+
+    // Group firstEl and secondEl
+    const origX1 = firstEl.x;
+    const origY1 = firstEl.y;
+    const origW1 = firstEl.width;
+    const origH1 = firstEl.height;
+    const origX2 = secondEl.x;
+    const origY2 = secondEl.y;
+    const origW2 = secondEl.width;
+    const origH2 = secondEl.height;
+
+    act(() => {
+      useStudioStore.getState().groupSelected([firstEl.id, secondEl.id]);
+    });
+
+    let scene = useStudioStore.getState().project.scenes[0];
+    let c1 = scene.elements.find((e) => e.id === firstEl.id)!;
+    let c2 = scene.elements.find((e) => e.id === secondEl.id)!;
+    expect(c1.parentGroupId).toBeTruthy();
+    expect(c1.parentGroupId).toBe(c2.parentGroupId);
+
+    // Move c1 by +80px X and +40px Y via updateElement -> c2 must also move by +80px X and +40px Y
+    act(() => {
+      useStudioStore.getState().updateElement(firstEl.id, {
+        x: origX1 + 80,
+        y: origY1 + 40,
+      });
+    });
+    scene = useStudioStore.getState().project.scenes[0];
+    c1 = scene.elements.find((e) => e.id === firstEl.id)!;
+    c2 = scene.elements.find((e) => e.id === secondEl.id)!;
+    expect(c1.x).toBe(origX1 + 80);
+    expect(c1.y).toBe(origY1 + 40);
+    expect(c2.x).toBe(origX2 + 80);
+    expect(c2.y).toBe(origY2 + 40);
+
+    // Resize c1 to 0.5x -> c2 must also resize to 0.5x
+    act(() => {
+      useStudioStore.getState().updateElement(firstEl.id, {
+        width: Math.round(origW1 * 0.5),
+        height: Math.round(origH1 * 0.5),
+      });
+    });
+    scene = useStudioStore.getState().project.scenes[0];
+    c2 = scene.elements.find((e) => e.id === secondEl.id)!;
+    expect(c2.width).toBe(Math.round(origW2 * 0.5));
+    expect(c2.height).toBe(Math.round(origH2 * 0.5));
+
+    // Rotate c1 to 15 deg -> c2 must also rotate by +15 deg
+    const prevRot2 = c2.rotation || 0;
+    const prevRot1 = c1.rotation || 0;
+    act(() => {
+      useStudioStore.getState().updateElement(firstEl.id, {
+        rotation: prevRot1 + 15,
+      });
+    });
+    scene = useStudioStore.getState().project.scenes[0];
+    c2 = scene.elements.find((e) => e.id === secondEl.id)!;
+    expect(c2.rotation).toBe(prevRot2 + 15);
+  });
+
+  it('auto-scales the Signage Player scene to the viewport and unlocks kiosk lockout via Maintenance Key Sequence', () => {
+    act(() => {
+      useStudioStore.getState().resetToStarterProject();
+      useStudioStore.getState().setAppMode('player');
+    });
+    render(<App />);
+
+    // 1. Verify player aspect frame renders and auto-scales to viewport dimensions
+    const aspectFrame = document.querySelector('.player-aspect-frame') as HTMLElement;
+    expect(aspectFrame).toBeTruthy();
+    expect(aspectFrame.getAttribute('data-scale-mode')).toBe('auto-fit');
+    const initialScaleX = Number(aspectFrame.getAttribute('data-scale-x'));
+    expect(initialScaleX).toBeGreaterThan(0);
+
+    // Simulate resizing window to 960x540 and verify scene scale updates dynamically
+    act(() => {
+      Object.defineProperty(window, 'innerWidth', {
+        writable: true,
+        configurable: true,
+        value: 960,
+      });
+      Object.defineProperty(window, 'innerHeight', {
+        writable: true,
+        configurable: true,
+        value: 540,
+      });
+      window.dispatchEvent(new Event('resize'));
+    });
+
+    const updatedScaleX = Number(aspectFrame.getAttribute('data-scale-x'));
+    expect(updatedScaleX).toBeLessThan(1);
+    expect(updatedScaleX).toBeGreaterThan(0.15);
+
+    // 2. Engage Kiosk Lockout -> hides HUD bar and sets body.kiosk-lockout-active
+    const lockBtn = screen.getByRole('button', { name: /Engage Kiosk Lockout/i });
+    fireEvent.click(lockBtn);
+    expect(document.body.classList.contains('kiosk-lockout-active')).toBe(true);
+    expect(screen.queryByRole('button', { name: /Engage Kiosk Lockout/i })).toBeNull();
+
+    // 3. Trigger Protected Maintenance Auth Modal using Hotkey Chord (Ctrl+Shift+M)
+    fireEvent.keyDown(window, { key: 'M', ctrlKey: true, shiftKey: true });
+    expect(
+      screen.getByText(/Protected Kiosk Maintenance Authentication/i)
+    ).toBeTruthy();
+
+    // Close modal and trigger via Sequential Remote Key Sequence (↑ ↑ ↓ ↓ ← →)
+    fireEvent.click(screen.getByRole('button', { name: /Cancel/i }));
+    expect(
+      screen.queryByText(/Protected Kiosk Maintenance Authentication/i)
+    ).toBeNull();
+
+    const seqKeys = [
+      'ArrowUp',
+      'ArrowUp',
+      'ArrowDown',
+      'ArrowDown',
+      'ArrowLeft',
+      'ArrowRight',
+    ];
+    for (const k of seqKeys) {
+      fireEvent.keyDown(window, { key: k });
+    }
+    expect(
+      screen.getByText(/Protected Kiosk Maintenance Authentication/i)
+    ).toBeTruthy();
+
+    // 4. Authenticate with default admin passphrase (ApexAdmin!2026) -> unlocks kiosk lockout
+    const passInput = screen.getByLabelText(/Administrator Passphrase/i);
+    fireEvent.change(passInput, { target: { value: 'ApexAdmin!2026' } });
+    fireEvent.click(
+      screen.getByRole('button', { name: /Verify & Unlock Maintenance/i })
+    );
+
+    expect(document.body.classList.contains('kiosk-lockout-active')).toBe(false);
+    expect(screen.getByRole('button', { name: /Engage Kiosk Lockout/i })).toBeTruthy();
   });
 });
 

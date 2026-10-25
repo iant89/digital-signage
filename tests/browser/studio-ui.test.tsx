@@ -522,7 +522,7 @@ describe('Digital Signage Studio React UI Integration', () => {
       screen.getByText(/Protected Kiosk Maintenance Authentication/i)
     ).toBeTruthy();
 
-    // 4. Authenticate with default admin passphrase (ApexAdmin!2026) -> unlocks kiosk lockout
+    // 4. Authenticate with default admin passphrase (ApexAdmin!2026) -> unlocks kiosk lockout and opens centered Maintenance Console
     const passInput = screen.getByLabelText(/Administrator Passphrase/i);
     fireEvent.change(passInput, { target: { value: 'ApexAdmin!2026' } });
     fireEvent.click(
@@ -531,6 +531,8 @@ describe('Digital Signage Studio React UI Integration', () => {
 
     expect(document.body.classList.contains('kiosk-lockout-active')).toBe(false);
     expect(screen.getByRole('button', { name: /Engage Kiosk Lockout/i })).toBeTruthy();
+    expect(screen.getByText(/Player Maintenance Mode Console/i)).toBeTruthy();
+    expect(document.querySelector('.player-bottom-telemetry')).toBeNull();
   });
 });
 

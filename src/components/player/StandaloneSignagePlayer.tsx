@@ -88,6 +88,7 @@ export const StandaloneSignagePlayer: React.FC = () => {
   const [adminPassphrase, setAdminPassphrase] = useState('');
   const [authError, setAuthError] = useState('');
   const [maintenanceRemainingSec, setMaintenanceRemainingSec] = useState(0);
+  const [showMaintenanceConsole, setShowMaintenanceConsole] = useState(false);
   const [watchdogState, setWatchdogState] = useState(() => watchdogSupervisor.getStatus());
   const [estimatedFps, setEstimatedFps] = useState(60);
   const [cornerTapCount, setCornerTapCount] = useState(0);
@@ -97,7 +98,10 @@ export const StandaloneSignagePlayer: React.FC = () => {
   >('auto-fit');
   const [viewportSize, setViewportSize] = useState<{ width: number; height: number }>(() => ({
     width: typeof window !== 'undefined' && window.innerWidth > 0 ? window.innerWidth : 1280,
-    height: typeof window !== 'undefined' && window.innerHeight > 0 ? window.innerHeight : 720,
+    height:
+      typeof window !== 'undefined' && window.innerHeight > 0
+        ? Math.max(200, window.innerHeight - 96)
+        : 640,
   }));
   const [authTriggerSource, setAuthTriggerSource] = useState<string>('Maintenance Key Sequence');
   const [sequenceProgress, setSequenceProgress] = useState<{
@@ -277,6 +281,7 @@ export const StandaloneSignagePlayer: React.FC = () => {
       setMaintenanceRemainingSec(rem);
       if (wasInMaintenanceSessionRef.current && rem === 0) {
         wasInMaintenanceSessionRef.current = false;
+        setShowMaintenanceConsole(false);
         setKioskLocked(true);
         showTransientOsd(
           `Maintenance session expired — Kiosk Lockout re-engaged (${kioskConfig.maintenanceHotkey} to unlock)`
@@ -492,6 +497,7 @@ export const StandaloneSignagePlayer: React.FC = () => {
     adminController.exitMaintenanceSession();
     wasInMaintenanceSessionRef.current = false;
     setMaintenanceRemainingSec(0);
+    setShowMaintenanceConsole(false);
     setKioskLocked(true);
     showTransientOsd(
       `Kiosk Lockout Engaged • Press ${kioskConfig.maintenanceHotkey || 'Ctrl+Shift+M'}, sequence [${formatKeySequenceBadge(
@@ -512,14 +518,11 @@ export const StandaloneSignagePlayer: React.FC = () => {
       setKioskLocked(false);
       wasInMaintenanceSessionRef.current = true;
       setShowAuthModal(false);
+      setShowMaintenanceConsole(true);
       setAdminPassphrase('');
       setAuthError('');
       setKioskOsdHint(null);
       setMaintenanceRemainingSec(adminController.getRemainingMaintenanceSeconds());
-      notify(
-        'success',
-        `Maintenance access granted via ${authTriggerSource} (${kioskConfig.maintenanceSessionDurationSec}s session).`
-      );
     } else {
       setAuthError(res.reason);
     }
@@ -772,6 +775,15 @@ export const StandaloneSignagePlayer: React.FC = () => {
             </button>
 
             <button
+              className={`btn-xs ${showMaintenanceConsole ? 'primary-accent' : ''}`}
+              onClick={() => setShowMaintenanceConsole(!showMaintenanceConsole)}
+              title={`Toggle Centered Player Maintenance Mode Console (${kioskConfig.maintenanceHotkey || 'Ctrl+Shift+M'})`}
+            >
+              <KeyRound size={13} /> Maintenance Console
+              {maintenanceRemainingSec > 0 ? ` (${maintenanceRemainingSec}s)` : ''}
+            </button>
+
+            <button
               className="btn-xs"
               onClick={handleEngageKioskLockout}
               title={`Engage Kiosk Lockout (Unlock with ${kioskConfig.maintenanceHotkey || 'Ctrl+Shift+M'} or [${formattedSeqLabel}])`}
@@ -786,7 +798,7 @@ export const StandaloneSignagePlayer: React.FC = () => {
         </div>
       )}
 
-      {/* Transient Kiosk OSD Banner & Live Key-Sequence Progress Indicator (Auto-Hides Like a Real Signage Player) */}
+      {/* Top-Centered Transient Kiosk OSD Banner & Live Key-Sequence Progress Indicator */}
       {(kioskOsdHint || sequenceProgress) && (
         <div
           className="kiosk-locked-floating-indicator"
@@ -831,8 +843,6 @@ export const StandaloneSignagePlayer: React.FC = () => {
             style={{
               width: `${scaledBoxWidth}px`,
               height: `${scaledBoxHeight}px`,
-              position: 'relative',
-              flexShrink: 0,
             }}
           >
             <div
@@ -872,36 +882,124 @@ export const StandaloneSignagePlayer: React.FC = () => {
                 ))}
             </div>
           </div>
-        </div>
-      )}
 
-      {/* Bottom Telemetry Strip when not locked */}
-      {!kioskLocked && (
-        <div className="player-bottom-telemetry">
-          <span>
-            <strong>Schedule:</strong> {resolvedSchedule?.reason} •{' '}
-            <strong>Viewport Scale:</strong> {scalePercentLabel} ({sceneW}×{sceneH} →{' '}
-            {scaledBoxWidth}×{scaledBoxHeight}px)
-          </span>
-          <span>
-            <strong>Maintenance Sequence:</strong>{' '}
-            <code>{kioskConfig.maintenanceHotkey || 'Ctrl+Shift+M'}</code> or{' '}
-            <code>{formattedSeqLabel}</code> • <strong>Watchdog:</strong> {watchdogState.state}
-          </span>
-          {maintenanceRemainingSec > 0 && (
-            <span style={{ color: '#38bdf8', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-              <span>
-                <Unlock size={12} /> Maintenance Session Auto-Locks in {maintenanceRemainingSec}s
-              </span>
-              <button
-                type="button"
-                className="btn-xs"
-                onClick={handleEngageKioskLockout}
-                title="Immediately end maintenance session and re-lock kiosk"
+          {/* Centered Player Maintenance Mode Console Overlay (Appears Centered Over Viewport) */}
+          {!kioskLocked && showMaintenanceConsole && (
+            <div
+              className="player-maintenance-console-backdrop"
+              onClick={() => setShowMaintenanceConsole(false)}
+            >
+              <div
+                className="inline-edit-dialog player-maintenance-console-card"
+                onClick={(e) => e.stopPropagation()}
               >
-                Relock Now
-              </button>
-            </span>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '10px',
+                  }}
+                >
+                  <h4 style={{ margin: 0 }}>
+                    <Unlock size={16} color="#10b981" /> Player Maintenance Mode Console
+                  </h4>
+                  {maintenanceRemainingSec > 0 && (
+                    <span
+                      className="perm-badge"
+                      style={{
+                        background: 'rgba(16, 185, 129, 0.16)',
+                        color: '#10b981',
+                        fontWeight: 700,
+                      }}
+                    >
+                      Auto-Locks in {maintenanceRemainingSec}s
+                    </span>
+                  )}
+                </div>
+
+                <div className="asset-stats-card" style={{ marginTop: '4px' }}>
+                  <div>
+                    <span>Device Name &amp; ID:</span>{' '}
+                    <strong>
+                      {kioskConfig.deviceName} ({kioskConfig.deviceId})
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Active Package:</span>{' '}
+                    <strong>{pkg.fileName}</strong> (SHA-256: {report.packageHashHex.slice(0, 10)}…)
+                  </div>
+                  <div>
+                    <span>Viewport Auto-Scale:</span>{' '}
+                    <strong>
+                      {scalePercentLabel} ({sceneW}×{sceneH} → {scaledBoxWidth}×{scaledBoxHeight}px)
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Schedule &amp; Watchdog:</span>{' '}
+                    <strong>
+                      {resolvedSchedule?.reason} • {watchdogState.state} ({estimatedFps} FPS)
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Maintenance Sequence:</span>{' '}
+                    <code>{kioskConfig.maintenanceHotkey || 'Ctrl+Shift+M'}</code> or{' '}
+                    <code>{formattedSeqLabel}</code>
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: '8px',
+                    marginTop: '6px',
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="btn-xs"
+                    onClick={() => setAppMode('studio')}
+                  >
+                    <ArrowLeft size={13} /> Open Studio Designer
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-xs"
+                    onClick={() => setAppMode('device-admin')}
+                  >
+                    <KeyRound size={13} /> Kiosk &amp; Key Sequence Settings
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-xs"
+                    onClick={() => {
+                      saveActivePlayerSetupQr(setupQrPayload);
+                      setShowSetupQrModal(true);
+                    }}
+                  >
+                    <QrCode size={13} /> Player Setup QR Code
+                  </button>
+                </div>
+
+                <div className="dialog-footer" style={{ marginTop: '10px' }}>
+                  <button
+                    type="button"
+                    className="btn-xs"
+                    onClick={() => setShowMaintenanceConsole(false)}
+                  >
+                    Minimize to Top Bar
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={handleEngageKioskLockout}
+                  >
+                    <Lock size={13} /> Exit Maintenance &amp; Relock Display
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
         </div>
       )}

@@ -1342,22 +1342,114 @@ body,
 }
 
 /* ==========================================================================
-   Collapsible Side Panels & Bottom Timeline Rail Styles
+   Collapsible Side Panels, Inside-Edge Vertical Title Bar & Drag Resize
    ========================================================================== */
+
+.studio-left-sidebar.has-inside-edge-bar,
+.studio-right-inspector.has-inside-edge-bar {
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+}
+
+.sidebar-main-column {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.panel-inside-edge-bar {
+  width: 24px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px 2px;
+  background: var(--bg-root);
+  cursor: col-resize;
+  user-select: none;
+  touch-action: none;
+  transition: background 0.15s ease;
+}
+
+.panel-inside-edge-bar:hover {
+  background: rgba(56, 189, 248, 0.12);
+}
+
+.panel-inside-edge-bar.left-panel-edge {
+  border-left: 1px solid var(--border-color);
+}
+
+.panel-inside-edge-bar.right-panel-edge {
+  border-right: 1px solid var(--border-color);
+}
+
+.panel-inside-edge-bar.collapsed-edge {
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+  border: none;
+  gap: 8px;
+}
+
+.inside-edge-chevron-btn {
+  width: 20px;
+  height: 24px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.inside-edge-chevron-btn:hover {
+  background: var(--accent-primary);
+  color: #fff;
+  border-color: var(--accent-bright);
+}
+
+.inside-edge-vertical-title {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  transform: rotate(180deg);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.4px;
+  color: var(--text-secondary);
+  margin: 10px 0;
+  white-space: nowrap;
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+
+.inside-edge-grip-icon {
+  color: var(--text-secondary);
+  opacity: 0.65;
+  flex-shrink: 0;
+  margin-bottom: 4px;
+}
 
 .studio-left-sidebar.collapsed,
 .studio-right-inspector.collapsed {
-  width: 42px;
-  padding: 6px 4px;
+  width: 38px;
+  padding: 0;
   align-items: center;
-  gap: 8px;
   background: var(--bg-panel);
   overflow: hidden;
 }
 
 .collapsed-rail-btn {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border-radius: 6px;
   border: 1px solid var(--border-color);
   background: var(--bg-root);
@@ -1367,6 +1459,7 @@ body,
   justify-content: center;
   cursor: pointer;
   transition: all 0.15s ease;
+  flex-shrink: 0;
 }
 
 .collapsed-rail-btn:hover,
@@ -1376,26 +1469,137 @@ body,
   border-color: var(--accent-bright);
 }
 
-.sidebar-collapse-btn {
-  width: 30px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  color: var(--text-secondary);
-  border: none;
-  border-left: 1px solid var(--border-color);
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.sidebar-collapse-btn:hover {
-  color: var(--text-primary);
-  background: var(--bg-panel-alt);
-}
-
 .studio-bottom-dock.collapsed {
   height: auto;
+}
+
+/* Prevent Canvas Scroll Interference While Dragging / Resizing / Rotating */
+.studio-canvas-viewport.canvas-drag-active {
+  overflow: hidden !important;
+  touch-action: none !important;
+  user-select: none !important;
+}
+
+/* ==========================================================================
+   Simple Audio Editor & Multi-Column Inspector Helpers
+   ========================================================================== */
+
+.audio-editor-modal {
+  width: 880px;
+  max-width: 96vw;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.audio-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.audio-editor-grid {
+  display: grid;
+  grid-template-columns: 270px 1fr;
+  gap: 14px;
+  margin-top: 10px;
+}
+
+.audio-tracks-sidebar {
+  border-right: 1px solid var(--border-color);
+  padding-right: 12px;
+}
+
+.audio-track-top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.audio-waveform-editor-box {
+  background: var(--bg-root);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.waveform-legend-row {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.audio-waveform-canvas {
+  height: 78px;
+  background: #050811;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 6px 8px;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.audio-wf-bar {
+  flex: 1;
+  border-radius: 2px;
+  background: #38bdf8;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.audio-wf-bar.out-crop {
+  background: #334155;
+  opacity: 0.35;
+}
+
+.audio-wf-bar.in-selection {
+  background: #10b981;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.5);
+}
+
+.audio-wf-bar.deleted-cut {
+  background: #f43f5e;
+  opacity: 0.25;
+}
+
+.inspector-grid-3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+}
+
+.inspector-row-2col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.inspector-row-4col {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+@media (max-width: 768px) {
+  .audio-editor-grid,
+  .inspector-row-4col,
+  .inspector-row-2col {
+    grid-template-columns: 1fr;
+  }
+  .audio-tracks-sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--border-color);
+    padding-right: 0;
+    padding-bottom: 10px;
+  }
 }
 
 /* ==========================================================================

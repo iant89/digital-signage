@@ -86,6 +86,31 @@
   - Added **Setup QR Code** modal on the Signage Player (`StandaloneSignagePlayer.tsx`) that displays the player's `signage://enroll?...` QR code upon setup.
   - Added **Scan Player Setup QR Code** modal in `NetworkManagementView.tsx` (Devices & Enrollment tab) supporting live rear camera (`getUserMedia({ video: { facingMode: 'environment' } })` + `BarcodeDetector`), photo capture (`capture="environment"`), one-tap scan of the active Player Setup QR code, and manual URI decoding.
 
+### [2026-10-25 — Session 06] Multi-Type QR Widget, Canvas Drag/Rotate Scroll Fix, Audio Editor & Inside-Edge Panel Bars
+
+- **Rich QR Code Widget (`src/utils/qrCodeGenerator.ts`, `SignageElementRenderer.tsx`, `StudioRightInspector.tsx`)**:
+  - Added `formatQrWidgetPayload` supporting 9 QR types (`link`, `wifi`, `contact`/vCard 3.0, `email`/MATMSG, `sms`/SMSTO, `phone`/tel, `geo`, `event`/VEVENT, `text`).
+  - Added `buildRichQrMatrix` supporting error correction levels `L` (21×21), `M` (25×25), `Q` (29×29), and `H` (33×33), custom corner finder eye color, module pattern styles (`square`, `rounded`, `dots`), quiet zone padding, and center logo overlay (upload image, project asset, or text badge).
+- **Canvas Drag / Rotate / Resize Scroll Fix (`src/components/studio/StudioCanvasWorkspace.tsx`, `src/styles.css`)**:
+  - Fixed viewport scrolling interference when dragging, rotating, or resizing widgets on scenes wider than the viewport by locking `scrollLeft`/`scrollTop` (`lockedScrollRef`), applying `.canvas-drag-active` (`overflow: hidden; touch-action: none`), calling `e.currentTarget.setPointerCapture(e.pointerId)` + `e.preventDefault()`, and handling pointer movements via window-level `pointermove`/`pointerup`/`pointercancel` listeners.
+- **Background Music & Simple Audio Editor (`src/utils/audioEngine.ts`, `src/components/studio/StudioAudioEditorModal.tsx`, `StudioBottomTimeline.tsx`, `StandaloneSignagePlayer.tsx`)**:
+  - Added `AudioClipConfig` to `SignageProject` and `.signage` manifest (`packages/project-model/index.ts`, `packages/signage-format/index.ts`).
+  - Implemented `StudioAudioEditorModal.tsx` with playback scope (`environment` across all scenes, `multi-scene`, or single `scene`), looping, non-destructive cropping (`trimStartMs`..`trimEndMs`), timeline start/stop by ms or frame (`startAtMs`..`stopAtMs`), audio effects (`fadeInMs`, `fadeOutMs`, `volume`, `channel` routing `stereo`/`left`/`right`/`mono`), deleting selected sections (`deletedRegions`), and combining multiple tracks into a single mix (`combineAudioTracks`).
+- **Side Panel Inside-Edge Vertical Title & Resize Bars (`StudioLeftSidebar.tsx`, `StudioRightInspector.tsx`, `src/styles.css`)**:
+  - Placed `.panel-inside-edge-bar.left-panel-edge` down the right (inside) edge of the left sidebar and `.panel-inside-edge-bar.right-panel-edge` down the left (inside) edge of the right inspector, each with a collapse/expand chevron at the top of the inside edge, rotated vertical title, and horizontal drag-to-resize.
+
+### [2026-10-25 — Session 07] Extended Widget Types, Motion Presets, Rotation Angle Modifiers & Multi-Motion Timeline Sequencing
+
+- **8 New Signage Widget Types (`packages/project-model/index.ts`, `SignageElementRenderer.tsx`, `StudioLeftSidebar.tsx`, `StudioRightInspector.tsx`)**:
+  - Added `kpi` (KPI Metric & SVG Sparkline), `chart` (Vertical & Horizontal Bar Charts), `wayfinding` (Directional Arrow Sign with floor/distance/status), `queue` (Now Serving Ticket & Waiting Queue Board), `progress` (Radial SVG Gauge & Linear Capacity Meter), `social` (Verified Social Wall Post), `calendar` (Room Booking Door Schedule with `available`/`occupied`/`upcoming` status), and `alert` (CAP Emergency / Facility Advisory Banner).
+- **12 New Motion Types & Multi-Motion Sequencing (`packages/animation-engine/index.ts`, `useStudioStore.ts`, `StudioRightInspector.tsx`, `StudioBottomTimeline.tsx`)**:
+  - Added `spin-cw`, `spin-ccw`, `swing`, `pulse`, `float`, `shake`, `flip-y`, `skew-slide`, `drop-in`, `spiral-in`, `flash`, and `rubber-band` (28 motion presets total).
+  - Updated `applyAnimationPreset` to append/stack multiple motions onto the same object by default (`replaceExisting: false`) and added `duplicateTrack` and `clearElementTracks`.
+  - Updated `computeSceneElementsAtTime` to group tracks per `(elementId, property)` sorted by `delayMs` ascending so sequential motions on the same object only take over when the timeline reaches their `delayMs` start time.
+  - Added **Start Time (`ms`)** and **Start Frame (`@ FPS`)** inputs, **Snap to Playhead**, **Rotation Angle (`°`)** slider/input (`rotationAngleDeg`), **Slide Distance (`px`)**, **Scale Factor**, and **Start/End Value** editors in `StudioRightInspector.tsx`, plus inline start time/frame inputs and horizontal span dragging on `StudioBottomTimeline.tsx`.
+
+
+
 ---
 
 ## Key Credentials & Test Constants Reference

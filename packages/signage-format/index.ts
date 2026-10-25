@@ -13,6 +13,7 @@ import {
 } from '@packages/compression';
 import {
   AssetItem,
+  AudioClipConfig,
   PlaybackSchedule,
   Playlist,
   ProjectSettings,
@@ -111,6 +112,7 @@ export interface SignageManifest {
   scripts: ScriptModule[];
   permissions: ScriptPermission[];
   components: ReusableComponent[];
+  audioTracks?: AudioClipConfig[];
 }
 
 export interface ArchiveValidationLimits {
@@ -794,6 +796,7 @@ export function buildSignagePackage(
     scripts: project.scripts,
     permissions: project.permissions,
     components: project.components,
+    audioTracks: project.audioTracks ?? [],
   };
 
   if (options.signPackage !== false) {
@@ -963,6 +966,7 @@ export function extractProjectFromArchive(
     scripts: report.manifest.scripts ?? [],
     permissions: report.manifest.permissions ?? [],
     components: report.manifest.components ?? [],
+    audioTracks: report.manifest.audioTracks ?? [],
   };
 
   return { project, report };

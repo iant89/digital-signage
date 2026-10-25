@@ -46,6 +46,14 @@ export type WidgetKind =
   | 'ticker'
   | 'datafeed'
   | 'weather'
+  | 'kpi'
+  | 'chart'
+  | 'wayfinding'
+  | 'queue'
+  | 'progress'
+  | 'social'
+  | 'calendar'
+  | 'alert'
   | 'custom';
 
 export type AnimatableProperty =
@@ -86,7 +94,19 @@ export type AnimationPresetName =
   | 'pan-drift'
   | 'bounce'
   | 'rotate'
+  | 'spin-cw'
+  | 'spin-ccw'
+  | 'swing'
+  | 'pulse'
+  | 'float'
+  | 'shake'
   | 'flip'
+  | 'flip-y'
+  | 'skew-slide'
+  | 'drop-in'
+  | 'spiral-in'
+  | 'flash'
+  | 'rubber-band'
   | 'typewriter'
   | 'ticker'
   | 'wipe'
@@ -120,12 +140,16 @@ export interface AnimationTrack {
   elementId: string;
   property: AnimatableProperty;
   preset?: AnimationPresetName;
+  label?: string;
   keyframes: Keyframe[];
   durationMs: number;
   delayMs: number;
   repeatCount: number; // 1 = once, -1 = infinite
   reverse: boolean;
   fillMode: 'none' | 'forwards' | 'backwards' | 'both';
+  rotationAngleDeg?: number;
+  distancePx?: number;
+  scaleFactor?: number;
   locked?: boolean;
   muted?: boolean;
   visible?: boolean;
@@ -186,10 +210,56 @@ export interface MediaProperties {
   playbackRate?: number;
   trimStartMs?: number;
   trimEndMs?: number;
+  startAtMs?: number;
+  stopAtMs?: number;
   posterAssetId?: string;
   fadeInMs?: number;
   fadeOutMs?: number;
+  audioChannel?: 'stereo' | 'left' | 'right' | 'mono';
+  audioScope?: 'scene' | 'multi-scene' | 'environment';
   altText?: string;
+}
+
+export type QrContentType =
+  | 'link'
+  | 'wifi'
+  | 'contact'
+  | 'email'
+  | 'sms'
+  | 'phone'
+  | 'geo'
+  | 'event'
+  | 'text';
+
+export type QrErrorCorrectionLevel = 'L' | 'M' | 'Q' | 'H';
+export type QrDotStyle = 'square' | 'rounded' | 'dots';
+
+export interface AudioDeletedRegion {
+  id: string;
+  startMs: number;
+  endMs: number;
+}
+
+export interface AudioClipConfig {
+  id: string;
+  name: string;
+  assetId: string;
+  scope: 'scene' | 'multi-scene' | 'environment';
+  sceneIds: string[];
+  enabled: boolean;
+  loop: boolean;
+  volume: number; // 0..1
+  channel: 'stereo' | 'left' | 'right' | 'mono';
+  startAtMs: number; // timeline start time (ms)
+  stopAtMs: number;  // timeline stop time (ms, 0 = until end)
+  trimStartMs: number; // crop start within audio file (ms)
+  trimEndMs: number;   // crop end within audio file (ms, 0 = full file)
+  durationMs: number;  // total source duration (ms)
+  fadeInMs: number;
+  fadeOutMs: number;
+  deletedRegions: AudioDeletedRegion[];
+  combinedTrackIds?: string[];
+  synthPreset?: 'ambient-pad' | 'corporate-chime' | 'upbeat-pulse' | 'lofi-drone' | 'uploaded';
 }
 
 export interface ShapeProperties {
@@ -210,14 +280,95 @@ export interface WidgetProperties {
   countdownTargetIso?: string;
   countdownLabel?: string;
   qrPayload?: string;
+  qrContentType?: QrContentType;
+  qrErrorCorrection?: QrErrorCorrectionLevel;
   qrForeground?: string;
   qrBackground?: string;
+  qrEyeColor?: string;
+  qrDotStyle?: QrDotStyle;
+  qrQuietZone?: number;
+  qrLabelText?: string;
+  qrLogoEnabled?: boolean;
+  qrLogoAssetId?: string;
+  qrLogoText?: string;
+  qrLogoUrl?: string;
+  qrLogoSizePercent?: number;
+  // Structured QR type fields
+  qrWifiSsid?: string;
+  qrWifiPassword?: string;
+  qrWifiEncryption?: 'WPA' | 'WEP' | 'nopass';
+  qrWifiHidden?: boolean;
+  qrContactName?: string;
+  qrContactOrg?: string;
+  qrContactTitle?: string;
+  qrContactPhone?: string;
+  qrContactEmail?: string;
+  qrContactUrl?: string;
+  qrEmailTo?: string;
+  qrEmailSubject?: string;
+  qrEmailBody?: string;
+  qrSmsPhone?: string;
+  qrSmsMessage?: string;
+  qrPhone?: string;
+  qrGeoLat?: string;
+  qrGeoLng?: string;
+  qrEventTitle?: string;
+  qrEventLocation?: string;
+  qrEventStartIso?: string;
+  qrEventEndIso?: string;
   tickerItems?: string[];
   tickerSpeedPxPerSec?: number;
   weatherLocation?: string;
   weatherTempC?: number;
   weatherCondition?: 'Sunny' | 'Partly Cloudy' | 'Rain' | 'Clear Night' | 'Windy';
   dataFeedRows?: Array<{ label: string; value: string; status?: 'normal' | 'highlight' | 'alert' }>;
+  // KPI Metric & Sparkline Widget
+  kpiTitle?: string;
+  kpiValue?: string;
+  kpiUnit?: string;
+  kpiDelta?: string;
+  kpiTrend?: 'up' | 'down' | 'neutral';
+  kpiSparklinePoints?: number[];
+  // Bar / Line / Donut Chart Widget
+  chartType?: 'bar' | 'horizontal-bar' | 'line' | 'donut';
+  chartTitle?: string;
+  chartShowValues?: boolean;
+  chartShowGrid?: boolean;
+  // Wayfinding & Directional Sign Widget
+  wayfindingDirection?: 'up' | 'up-right' | 'right' | 'down-right' | 'down' | 'left' | 'up-left' | 'elevator' | 'accessible';
+  wayfindingDestination?: string;
+  wayfindingSubtext?: string;
+  wayfindingDistance?: string;
+  wayfindingStatus?: string;
+  // Queue / Now Serving Ticket Widget
+  queueTitle?: string;
+  queueCurrentTicket?: string;
+  queueCounterLabel?: string;
+  queueWaitingTickets?: string[];
+  // Progress / Capacity Gauge Widget
+  progressStyle?: 'radial' | 'linear';
+  progressTitle?: string;
+  progressValue?: number;
+  progressMax?: number;
+  progressUnit?: string;
+  progressSubtitle?: string;
+  // Social Wall / Spotlight Card Widget
+  socialHandle?: string;
+  socialAuthor?: string;
+  socialPostText?: string;
+  socialPlatform?: 'x' | 'linkedin' | 'instagram' | 'announcement';
+  socialTimestamp?: string;
+  socialLikes?: string;
+  // Calendar / Room Booking Schedule Widget
+  calendarRoomName?: string;
+  calendarRoomStatus?: 'available' | 'occupied' | 'upcoming';
+  calendarCurrentEvent?: string;
+  calendarOrganizer?: string;
+  // CAP Emergency / Safety Alert Widget
+  alertSeverity?: 'info' | 'warning' | 'critical';
+  alertTitle?: string;
+  alertMessage?: string;
+  alertZone?: string;
   accentColor?: string;
   customConfigJson?: string;
 }
@@ -427,6 +578,7 @@ export interface SignageProject {
   scripts: ScriptModule[];
   permissions: ScriptPermission[];
   components: ReusableComponent[];
+  audioTracks?: AudioClipConfig[];
 }
 
 export interface ProjectValidationIssue {
@@ -1309,6 +1461,48 @@ export function createStarterProject(): SignageProject {
           { key: 'title', label: 'Metric Title', defaultValue: 'SYSTEM UPTIME' },
           { key: 'value', label: 'Metric Value', defaultValue: '99.98%' },
         ],
+      },
+    ],
+    audioTracks: [
+      {
+        id: 'audio-track-ambient-env',
+        name: 'Atrium Ambient Soundscape (Continuous Environment)',
+        assetId: 'asset-audio-ambient',
+        scope: 'environment',
+        sceneIds: ['scene-welcome', 'scene-promo'],
+        enabled: true,
+        loop: true,
+        volume: 0.72,
+        channel: 'stereo',
+        startAtMs: 0,
+        stopAtMs: 0,
+        trimStartMs: 0,
+        trimEndMs: 10000,
+        durationMs: 10000,
+        fadeInMs: 1200,
+        fadeOutMs: 1200,
+        deletedRegions: [],
+        synthPreset: 'ambient-pad',
+      },
+      {
+        id: 'audio-track-scene-chime',
+        name: 'Welcome Keynote Chime (Scene Specific)',
+        assetId: 'asset-audio-chime',
+        scope: 'scene',
+        sceneIds: ['scene-welcome'],
+        enabled: true,
+        loop: false,
+        volume: 0.85,
+        channel: 'stereo',
+        startAtMs: 500,
+        stopAtMs: 6500,
+        trimStartMs: 0,
+        trimEndMs: 6000,
+        durationMs: 6000,
+        fadeInMs: 400,
+        fadeOutMs: 800,
+        deletedRegions: [],
+        synthPreset: 'corporate-chime',
       },
     ],
   };

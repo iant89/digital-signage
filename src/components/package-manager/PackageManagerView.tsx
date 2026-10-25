@@ -23,6 +23,8 @@ import { useStudioStore } from '@/store/useStudioStore';
 import {
   ArchiveValidationReport,
   DirectoryEntryType,
+  applySignageDeltaPatch,
+  buildSignageDeltaPatch,
   compareSignagePackages,
   readArchiveEntryBytes,
   validateSignageArchive,
@@ -222,7 +224,14 @@ export const PackageManagerView: React.FC = () => {
     const pkgB = builtPackages.find((p) => p.packageHashHex === comparePkgHashB);
     if (!pkgB) return null;
     try {
-      return compareSignagePackages(activePackage.bytes, pkgB.bytes);
+      const diff = compareSignagePackages(activePackage.bytes, pkgB.bytes);
+      const deltaPatch = buildSignageDeltaPatch(activePackage.bytes, pkgB.bytes);
+      const reconstructed = applySignageDeltaPatch(activePackage.bytes, deltaPatch);
+      return {
+        ...diff,
+        deltaPatch,
+        bitIdenticalVerified: reconstructed.byteLength === pkgB.bytes.byteLength,
+      };
     } catch {
       return null;
     }
@@ -593,6 +602,26 @@ export const PackageManagerView: React.FC = () => {
                     <span>Signature Status:</span>{' '}
                     <strong>
                       {comparisonResult.signatureStatusA} → {comparisonResult.signatureStatusB}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Delta Patch Wire Size:</span>{' '}
+                    <strong>
+                      {formatBytes(comparisonResult.deltaPatch.deltaPayloadBytes)} (
+                      {comparisonResult.deltaPatch.bandwidthSavingsPercent}% WAN bandwidth saved)
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Retained / Changed Entries:</span>{' '}
+                    <strong>
+                      {comparisonResult.deltaPatch.retainedEntryCount} retained /{' '}
+                      {comparisonResult.deltaPatch.changedEntryCount} inline
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Bit-Identical Reconstruction:</span>{' '}
+                    <strong style={{ color: '#10b981' }}>
+                      {comparisonResult.bitIdenticalVerified ? 'SHA-256 VERIFIED' : 'FAILED'}
                     </strong>
                   </div>
                 </div>

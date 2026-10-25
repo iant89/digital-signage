@@ -77,6 +77,12 @@ export interface StudioState {
   timelineZoom: number;
   frameDisplayMode: 'time' | 'frames';
 
+  // Panel Collapse & Mobile Responsive Layout state
+  leftSidebarCollapsed: boolean;
+  rightInspectorCollapsed: boolean;
+  bottomTimelineCollapsed: boolean;
+  isMobileLayout: boolean;
+
   // Package & Player state
   builtPackages: BuiltSignagePackage[];
   standalonePlayerPackage: BuiltSignagePackage | null;
@@ -136,6 +142,14 @@ export interface StudioState {
   setTimelineZoom: (zoom: number) => void;
   setFrameDisplayMode: (mode: 'time' | 'frames') => void;
 
+  setLeftSidebarCollapsed: (collapsed: boolean) => void;
+  toggleLeftSidebar: () => void;
+  setRightInspectorCollapsed: (collapsed: boolean) => void;
+  toggleRightInspector: () => void;
+  setBottomTimelineCollapsed: (collapsed: boolean) => void;
+  toggleBottomTimeline: () => void;
+  setIsMobileLayout: (isMobile: boolean) => void;
+
   exportSignagePackage: (options?: BuildPackageOptions) => BuiltSignagePackage;
   importSignagePackageBytes: (bytes: Uint8Array, openInPlayer?: boolean) => BuiltSignagePackage;
   setStandalonePlayerPackage: (pkg: BuiltSignagePackage | null) => void;
@@ -172,6 +186,14 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   timelinePlaying: false,
   timelineZoom: 1,
   frameDisplayMode: 'time',
+
+  leftSidebarCollapsed: false,
+  rightInspectorCollapsed: false,
+  bottomTimelineCollapsed: false,
+  isMobileLayout:
+    typeof window !== 'undefined' &&
+    (window.innerWidth <= 768 ||
+      /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '')),
 
   builtPackages: [initialBuiltPkg],
   standalonePlayerPackage: initialBuiltPkg,
@@ -666,6 +688,43 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   setTimelinePlaying: (playing) => set({ timelinePlaying: playing }),
   setTimelineZoom: (zoom) => set({ timelineZoom: Math.max(0.5, Math.min(4, zoom)) }),
   setFrameDisplayMode: (mode) => set({ frameDisplayMode: mode }),
+
+  setLeftSidebarCollapsed: (collapsed) =>
+    set((state) => ({
+      leftSidebarCollapsed: collapsed,
+      rightInspectorCollapsed:
+        !collapsed && state.isMobileLayout ? true : state.rightInspectorCollapsed,
+    })),
+
+  toggleLeftSidebar: () => {
+    const next = !get().leftSidebarCollapsed;
+    get().setLeftSidebarCollapsed(next);
+  },
+
+  setRightInspectorCollapsed: (collapsed) =>
+    set((state) => ({
+      rightInspectorCollapsed: collapsed,
+      leftSidebarCollapsed:
+        !collapsed && state.isMobileLayout ? true : state.leftSidebarCollapsed,
+    })),
+
+  toggleRightInspector: () => {
+    const next = !get().rightInspectorCollapsed;
+    get().setRightInspectorCollapsed(next);
+  },
+
+  setBottomTimelineCollapsed: (collapsed) => set({ bottomTimelineCollapsed: collapsed }),
+
+  toggleBottomTimeline: () => set({ bottomTimelineCollapsed: !get().bottomTimelineCollapsed }),
+
+  setIsMobileLayout: (isMobile) =>
+    set({
+      isMobileLayout: isMobile,
+      leftSidebarCollapsed: isMobile ? true : false,
+      rightInspectorCollapsed: isMobile ? true : false,
+      bottomTimelineCollapsed: isMobile ? true : false,
+      canvasZoom: isMobile ? 0.22 : 0.46,
+    }),
 
   exportSignagePackage: (options) => {
     const pkg = buildSignagePackage(get().project, options);

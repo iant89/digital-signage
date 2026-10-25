@@ -13,6 +13,8 @@ import {
   Trash2,
   ShieldAlert,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { useStudioStore } from '@/store/useStudioStore';
 import {
@@ -65,6 +67,9 @@ export const StudioRightInspector: React.FC = () => {
     deleteTrack,
     commitProjectChange,
     timelineTimeMs,
+    rightInspectorCollapsed,
+    setRightInspectorCollapsed,
+    toggleRightInspector,
   } = useStudioStore();
 
   const activeScene =
@@ -151,6 +156,51 @@ export const StudioRightInspector: React.FC = () => {
     runtime.cleanupSceneResources();
   };
 
+  if (rightInspectorCollapsed) {
+    return (
+      <aside className="studio-right-inspector collapsed" aria-label="Collapsed Right Inspector">
+        <button
+          className="collapsed-rail-btn"
+          onClick={() => setRightInspectorCollapsed(false)}
+          title="Expand Right Inspector"
+          aria-label="Expand Right Inspector"
+        >
+          <ChevronLeft size={15} />
+        </button>
+        <button
+          className={`collapsed-rail-btn ${activeTab === 'properties' ? 'active' : ''}`}
+          onClick={() => {
+            setActiveTab('properties');
+            setRightInspectorCollapsed(false);
+          }}
+          title="Element & Scene Properties Inspector"
+        >
+          <Sliders size={15} />
+        </button>
+        <button
+          className={`collapsed-rail-btn ${activeTab === 'animation' ? 'active' : ''}`}
+          onClick={() => {
+            setActiveTab('animation');
+            setRightInspectorCollapsed(false);
+          }}
+          title={`Motion & Animation Tracks (${elementTracks.length})`}
+        >
+          <Sparkles size={15} />
+        </button>
+        <button
+          className={`collapsed-rail-btn ${activeTab === 'scene-scripts' ? 'active' : ''}`}
+          onClick={() => {
+            setActiveTab('scene-scripts');
+            setRightInspectorCollapsed(false);
+          }}
+          title="Scene Settings & Restricted Script Sandbox"
+        >
+          <Code2 size={15} />
+        </button>
+      </aside>
+    );
+  }
+
   return (
     <aside className="studio-right-inspector">
       <div className="sidebar-tabs">
@@ -171,6 +221,14 @@ export const StudioRightInspector: React.FC = () => {
           onClick={() => setActiveTab('scene-scripts')}
         >
           <Code2 size={14} /> Scene & Scripts
+        </button>
+        <button
+          className="sidebar-collapse-btn"
+          onClick={toggleRightInspector}
+          title="Collapse Right Inspector"
+          aria-label="Collapse Right Inspector"
+        >
+          <ChevronRight size={14} />
         </button>
       </div>
 

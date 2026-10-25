@@ -28,6 +28,8 @@ import {
   Upload,
   Sparkles,
   CalendarClock,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { useStudioStore } from '@/store/useStudioStore';
 import {
@@ -59,6 +61,9 @@ export const StudioLeftSidebar: React.FC = () => {
     importAssetItem,
     deleteAssetItem,
     commitProjectChange,
+    leftSidebarCollapsed,
+    setLeftSidebarCollapsed,
+    toggleLeftSidebar,
   } = useStudioStore();
 
   const activeScene =
@@ -180,6 +185,61 @@ export const StudioLeftSidebar: React.FC = () => {
     });
   };
 
+  if (leftSidebarCollapsed) {
+    return (
+      <aside className="studio-left-sidebar collapsed" aria-label="Collapsed Left Sidebar">
+        <button
+          className="collapsed-rail-btn"
+          onClick={() => setLeftSidebarCollapsed(false)}
+          title="Expand Left Sidebar"
+          aria-label="Expand Left Sidebar"
+        >
+          <ChevronRight size={15} />
+        </button>
+        <button
+          className={`collapsed-rail-btn ${activeTab === 'elements' ? 'active' : ''}`}
+          onClick={() => {
+            setActiveTab('elements');
+            setLeftSidebarCollapsed(false);
+          }}
+          title="Elements & Widgets Palette"
+        >
+          <Sparkles size={15} />
+        </button>
+        <button
+          className={`collapsed-rail-btn ${activeTab === 'media' ? 'active' : ''}`}
+          onClick={() => {
+            setActiveTab('media');
+            setLeftSidebarCollapsed(false);
+          }}
+          title={`Media Library (${project.assets.length})`}
+        >
+          <FolderOpen size={15} />
+        </button>
+        <button
+          className={`collapsed-rail-btn ${activeTab === 'scenes' ? 'active' : ''}`}
+          onClick={() => {
+            setActiveTab('scenes');
+            setLeftSidebarCollapsed(false);
+          }}
+          title={`Scenes & Playlists (${project.scenes.length})`}
+        >
+          <CalendarClock size={15} />
+        </button>
+        <button
+          className={`collapsed-rail-btn ${activeTab === 'layers' ? 'active' : ''}`}
+          onClick={() => {
+            setActiveTab('layers');
+            setLeftSidebarCollapsed(false);
+          }}
+          title={`Scene Layers (${activeScene?.elements.length ?? 0})`}
+        >
+          <Layers size={15} />
+        </button>
+      </aside>
+    );
+  }
+
   return (
     <aside className="studio-left-sidebar">
       <div className="sidebar-tabs">
@@ -206,6 +266,14 @@ export const StudioLeftSidebar: React.FC = () => {
           onClick={() => setActiveTab('layers')}
         >
           <Layers size={14} /> Layers ({activeScene?.elements.length ?? 0})
+        </button>
+        <button
+          className="sidebar-collapse-btn"
+          onClick={toggleLeftSidebar}
+          title="Collapse Left Sidebar"
+          aria-label="Collapse Left Sidebar"
+        >
+          <ChevronLeft size={14} />
         </button>
       </div>
 

@@ -1071,3 +1071,255 @@ export function compareSignagePackages(
     signatureStatusB: repB.signatureVerified ? 'Verified' : 'Unsigned/Unverified',
   };
 }
+
+// ============================================================================
+// Phase 14.1: Binary Delta Patch Transport (Spec Section 27.5)
+// Entry-level delta diff & bit-identical reconstruction between base & target
+// ============================================================================
+
+export interface SignageDeltaEntryInstruction {
+  entryId: number;
+  entryType: DirectoryEntryType;
+  compressionMethod: CompressionMethod;
+  flags: number;
+  originalLength: number;
+  storedLength: number;
+  contentHashHex: string;
+  logicalPath: string;
+  mimeType: string;
+  source: 'base' | 'inline';
+  baseEntryId?: number;
+  inlineStoredBase64?: string;
+}
+
+export interface SignageDeltaPatch {
+  patchFormatVersion: 1;
+  basePackageHashHex: string;
+  targetPackageHashHex: string;
+  targetFeatureFlags: number;
+  targetManifestEntryId: number;
+  targetPackageSizeBytes: number;
+  deltaPayloadBytes: number;
+  bandwidthSavedBytes: number;
+  bandwidthSavingsPercent: number;
+  retainedEntryCount: number;
+  changedEntryCount: number;
+  instructions: SignageDeltaEntryInstruction[];
+}
+
+function uint8ToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return typeof btoa === 'function'
+    ? btoa(binary)
+    : Buffer.from(bytes).toString('base64');
+}
+
+function base64ToUint8(b64: string): Uint8Array {
+  if (typeof atob === 'function') {
+    const bin = atob(b64);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) {
+      out[i] = bin.charCodeAt(i);
+    }
+    return out;
+  }
+  return new Uint8Array(Buffer.from(b64, 'base64'));
+}
+
+export function buildSignageDeltaPatch(
+  baseBytes: Uint8Array,
+  targetBytes: Uint8Array
+): SignageDeltaPatch {
+  const baseVal = validateSignageArchive(baseBytes);
+  const targetVal = validateSignageArchive(targetBytes);
+
+  if (!baseVal.valid || !baseVal.entries || !baseVal.header) {
+    throw new Error(`Invalid base package for delta patch: ${baseVal.errors.join('; ')}`);
+  }
+  if (!targetVal.valid || !targetVal.entries || !targetVal.header) {
+    throw new Error(`Invalid target package for delta patch: ${targetVal.errors.join('; ')}`);
+  }
+
+  // Index base entries by contentHashHex + compressionMethod + storedLength
+  const baseByKey = new Map<string, SignageDirectoryEntry>();
+  for (const bEntry of baseVal.entries) {
+    const key = `${bEntry.contentHashHex}:${bEntry.compressionMethod}:${bEntry.storedLength}`;
+    baseByKey.set(key, bEntry);
+  }
+
+  const instructions: SignageDeltaEntryInstruction[] = [];
+  let retainedEntryCount = 0;
+  let changedEntryCount = 0;
+  let inlineStoredBytesTotal = 0;
+
+  for (const tEntry of targetVal.entries) {
+    const key = `${tEntry.contentHashHex}:${tEntry.compressionMethod}:${tEntry.storedLength}`;
+    const matchingBase = baseByKey.get(key);
+
+    if (matchingBase) {
+      retainedEntryCount++;
+      instructions.push({
+        entryId: tEntry.entryId,
+        entryType: tEntry.entryType,
+        compressionMethod: tEntry.compressionMethod,
+        flags: tEntry.flags,
+        originalLength: tEntry.originalLength,
+        storedLength: tEntry.storedLength,
+        contentHashHex: tEntry.contentHashHex,
+        logicalPath: tEntry.logicalPath,
+        mimeType: tEntry.mimeType,
+        source: 'base',
+        baseEntryId: matchingBase.entryId,
+      });
+    } else {
+      changedEntryCount++;
+      const slice = targetBytes.subarray(
+        tEntry.dataOffset,
+        tEntry.dataOffset + tEntry.storedLength
+      );
+      inlineStoredBytesTotal += slice.byteLength;
+      instructions.push({
+        entryId: tEntry.entryId,
+        entryType: tEntry.entryType,
+        compressionMethod: tEntry.compressionMethod,
+        flags: tEntry.flags,
+        originalLength: tEntry.originalLength,
+        storedLength: tEntry.storedLength,
+        contentHashHex: tEntry.contentHashHex,
+        logicalPath: tEntry.logicalPath,
+        mimeType: tEntry.mimeType,
+        source: 'inline',
+        inlineStoredBase64: uint8ToBase64(slice),
+      });
+    }
+  }
+
+  // Compute realistic binary delta wire size (header + instruction metadata + inline compressed chunks)
+  const metadataOverheadBytes = 128 + instructions.length * 48;
+  const deltaPayloadBytes = inlineStoredBytesTotal + metadataOverheadBytes;
+  const targetPackageSizeBytes = targetBytes.byteLength;
+  const bandwidthSavedBytes = Math.max(0, targetPackageSizeBytes - deltaPayloadBytes);
+  const bandwidthSavingsPercent =
+    targetPackageSizeBytes > 0
+      ? Math.round((bandwidthSavedBytes / targetPackageSizeBytes) * 1000) / 10
+      : 0;
+
+  return {
+    patchFormatVersion: 1,
+    basePackageHashHex: baseVal.packageHashHex,
+    targetPackageHashHex: targetVal.packageHashHex,
+    targetFeatureFlags: targetVal.header.featureFlags,
+    targetManifestEntryId: targetVal.header.manifestEntryId,
+    targetPackageSizeBytes,
+    deltaPayloadBytes,
+    bandwidthSavedBytes,
+    bandwidthSavingsPercent,
+    retainedEntryCount,
+    changedEntryCount,
+    instructions,
+  };
+}
+
+export function applySignageDeltaPatch(
+  baseBytes: Uint8Array,
+  patch: SignageDeltaPatch
+): Uint8Array {
+  const baseVal = validateSignageArchive(baseBytes);
+  if (!baseVal.valid || !baseVal.entries) {
+    throw new Error(`Cannot apply delta patch to invalid base package: ${baseVal.errors.join('; ')}`);
+  }
+
+  if (baseVal.packageHashHex !== patch.basePackageHashHex) {
+    throw new Error(
+      `Base package hash mismatch: expected ${patch.basePackageHashHex}, got ${baseVal.packageHashHex}`
+    );
+  }
+
+  const baseEntriesById = new Map<number, SignageDirectoryEntry>(
+    baseVal.entries.map((e) => [e.entryId, e])
+  );
+
+  const storedChunks: Uint8Array[] = [];
+  const rebuiltEntries: SignageDirectoryEntry[] = [];
+  let currentOffset = SIGNAGE_HEADER_SIZE;
+
+  for (const inst of patch.instructions) {
+    let chunk: Uint8Array;
+    if (inst.source === 'base') {
+      const baseEntry =
+        inst.baseEntryId !== undefined ? baseEntriesById.get(inst.baseEntryId) : undefined;
+      if (!baseEntry) {
+        throw new Error(`Delta patch references missing base entry ID ${inst.baseEntryId}`);
+      }
+      if (baseEntry.contentHashHex !== inst.contentHashHex) {
+        throw new Error(
+          `Delta patch base entry ${inst.baseEntryId} SHA-256 mismatch (${baseEntry.contentHashHex} !== ${inst.contentHashHex})`
+        );
+      }
+      chunk = baseBytes.subarray(
+        baseEntry.dataOffset,
+        baseEntry.dataOffset + baseEntry.storedLength
+      );
+    } else {
+      if (!inst.inlineStoredBase64) {
+        throw new Error(`Delta patch inline entry "${inst.logicalPath}" missing payload`);
+      }
+      chunk = base64ToUint8(inst.inlineStoredBase64);
+    }
+
+    if (chunk.byteLength !== inst.storedLength) {
+      throw new Error(
+        `Delta patch stored length mismatch on "${inst.logicalPath}": expected ${inst.storedLength}, got ${chunk.byteLength}`
+      );
+    }
+
+    storedChunks.push(chunk);
+    rebuiltEntries.push({
+      entryId: inst.entryId,
+      entryType: inst.entryType,
+      compressionMethod: inst.compressionMethod,
+      flags: inst.flags,
+      dataOffset: currentOffset,
+      storedLength: inst.storedLength,
+      originalLength: inst.originalLength,
+      contentHashBytes: hexToBytes(inst.contentHashHex),
+      contentHashHex: inst.contentHashHex,
+      logicalPath: inst.logicalPath,
+      mimeType: inst.mimeType,
+    });
+    currentOffset += chunk.byteLength;
+  }
+
+  const directoryBytes = encodeDirectoryEntries(rebuiltEntries);
+  const headerBytes = encodeSignageHeader({
+    formatVersion: SIGNAGE_FORMAT_VERSION,
+    headerSize: SIGNAGE_HEADER_SIZE,
+    featureFlags: patch.targetFeatureFlags,
+    directoryOffset: currentOffset,
+    directoryLength: directoryBytes.byteLength,
+    manifestEntryId: patch.targetManifestEntryId,
+    entryCount: rebuiltEntries.length,
+  });
+
+  const reconstructed = concatBytes([headerBytes, ...storedChunks, directoryBytes]);
+  const reconstructedHash = sha256Hex(reconstructed);
+
+  if (reconstructedHash !== patch.targetPackageHashHex) {
+    throw new Error(
+      `Reconstructed package SHA-256 mismatch: expected ${patch.targetPackageHashHex}, got ${reconstructedHash}`
+    );
+  }
+
+  const finalValidation = validateSignageArchive(reconstructed);
+  if (!finalValidation.valid) {
+    throw new Error(
+      `Reconstructed target package failed validation: ${finalValidation.errors.join('; ')}`
+    );
+  }
+
+  return reconstructed;
+}
+

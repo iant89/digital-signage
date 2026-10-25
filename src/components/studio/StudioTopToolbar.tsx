@@ -26,6 +26,9 @@ import {
   Download,
   Layers,
   RotateCcw,
+  PanelLeft,
+  PanelRight,
+  PanelBottom,
 } from 'lucide-react';
 import { useStudioStore } from '@/store/useStudioStore';
 import { RESOLUTION_PRESETS } from '@packages/project-model';
@@ -55,6 +58,13 @@ export const StudioTopToolbar: React.FC = () => {
     setShowGrid,
     showSafeArea,
     setShowSafeArea,
+    leftSidebarCollapsed,
+    toggleLeftSidebar,
+    rightInspectorCollapsed,
+    toggleRightInspector,
+    bottomTimelineCollapsed,
+    toggleBottomTimeline,
+    isMobileLayout,
     exportSignagePackage,
     setAppMode,
     resetToStarterProject,
@@ -93,6 +103,34 @@ export const StudioTopToolbar: React.FC = () => {
 
   return (
     <div className="studio-toolbar">
+      {/* Collapsible Side & Bottom Panel Toggles */}
+      <div className="toolbar-group">
+        <button
+          className={`icon-btn ${!leftSidebarCollapsed ? 'active' : ''}`}
+          onClick={toggleLeftSidebar}
+          title={leftSidebarCollapsed ? 'Expand Left Sidebar' : 'Collapse Left Sidebar'}
+          aria-label="Toggle Left Sidebar"
+        >
+          <PanelLeft size={15} />
+        </button>
+        <button
+          className={`icon-btn ${!bottomTimelineCollapsed ? 'active' : ''}`}
+          onClick={toggleBottomTimeline}
+          title={bottomTimelineCollapsed ? 'Expand Bottom Timeline' : 'Collapse Bottom Timeline'}
+          aria-label="Toggle Bottom Timeline"
+        >
+          <PanelBottom size={15} />
+        </button>
+        <button
+          className={`icon-btn ${!rightInspectorCollapsed ? 'active' : ''}`}
+          onClick={toggleRightInspector}
+          title={rightInspectorCollapsed ? 'Expand Right Inspector' : 'Collapse Right Inspector'}
+          aria-label="Toggle Right Inspector"
+        >
+          <PanelRight size={15} />
+        </button>
+      </div>
+
       {/* Project Name & Save Status */}
       <div className="toolbar-group">
         <input
@@ -280,7 +318,7 @@ export const StudioTopToolbar: React.FC = () => {
         </button>
         <button
           className="btn-xs"
-          onClick={() => setCanvasZoom(0.46)}
+          onClick={() => setCanvasZoom(isMobileLayout ? 0.22 : 0.46)}
           title="Fit Canvas to Viewport"
         >
           Fit

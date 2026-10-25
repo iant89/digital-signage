@@ -25,8 +25,19 @@ import {
   KeyRound,
   UserX,
   Zap,
+  QrCode,
+  Camera,
+  Smartphone,
+  CheckCircle2,
 } from 'lucide-react';
 import { useStudioStore } from '@/store/useStudioStore';
+import {
+  PlayerSetupQrPayload,
+  buildEnrollmentQrMatrix,
+  decodePlayerSetupQrPayload,
+  encodePlayerSetupQrPayload,
+  loadActivePlayerSetupQr,
+} from '@/utils/enrollmentQr';
 import {
   ClockSyncEngine,
   SynchronizedSessionConfig,
@@ -61,7 +72,7 @@ interface ServerDevice {
 }
 
 export const NetworkManagementView: React.FC = () => {
-  const { project, notify } = useStudioStore();
+  const { project, notify, isMobileLayout } = useStudioStore();
   const [activeTab, setActiveTab] = useState<NetworkTab>('sync-dashboard');
 
   const [overview, setOverview] = useState<Record<string, unknown> | null>(null);
@@ -89,6 +100,18 @@ export const NetworkManagementView: React.FC = () => {
   const [selectedCmdType, setSelectedCmdType] = useState('STATUS_REQUEST');
   const [deployPackageId, setDeployPackageId] = useState('pkg-apex-lobby-v1');
   const [deployGroupId, setDeployGroupId] = useState('group-lobby-wall');
+
+  // Mobile Player Setup QR Code Scanner state
+  const [showQrScannerModal, setShowQrScannerModal] = useState(false);
+  const [detectedPlayerQr, setDetectedPlayerQr] = useState<PlayerSetupQrPayload>(() =>
+    loadActivePlayerSetupQr()
+  );
+  const [qrInputText, setQrInputText] = useState('');
+  const [cameraActive, setCameraActive] = useState(false);
+  const [cameraStatusText, setCameraStatusText] = useState(
+    'Point mobile camera at the Signage Player Setup QR Code'
+  );
+  const qrVideoRef = useRef<HTMLVideoElement | null>(null);
 
   const fetchServerData = useCallback(async () => {
     try {
@@ -358,6 +381,139 @@ export const NetworkManagementView: React.FC = () => {
       notify('error', data.error || 'Enrollment failed');
     }
   };
+
+  const handleEnrollFromQrPayload = useCallback(
+    async (rawQrText: string) => {
+      const parsed = decodePlayerSetupQrPayload(rawQrText);
+      if (!parsed) {
+        notify('error', 'Invalid Player Setup QR Code payload.');
+        return;
+      }
+
+      setNewDeviceName(parsed.deviceName);
+      setNewDeviceLocation(parsed.location);
+
+      // Check whether the QR code's enrollment code is still unused; if already used, enroll directly with the player's metadata
+      const matchingUnusedCode = enrollmentCodes.find(
+        (c) => String(c.code) === parsed.enrollmentCode && !c.used_at
+      );
+
+      const res = await fetch('/api/v1/devices/enroll', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enrollmentCode: matchingUnusedCode ? parsed.enrollmentCode : undefined,
+          deviceId: parsed.deviceId,
+          deviceName: parsed.deviceName,
+          location: parsed.location,
+          assignedDisplay: parsed.assignedDisplay,
+          os: parsed.os,
+          groupId: 'group-lobby-wall',
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setShowQrScannerModal(false);
+        await fetchServerData();
+        notify(
+          'success',
+          `Scanned Player Setup QR Code & enrolled "${data.deviceName}" (${data.deviceId})!`
+        );
+      } else {
+        notify('error', data.error || 'QR Code enrollment failed');
+      }
+    },
+    [enrollmentCodes, fetchServerData, notify]
+  );
+
+  const handleOpenQrScanner = () => {
+    const latestQr = loadActivePlayerSetupQr();
+    setDetectedPlayerQr(latestQr);
+    setQrInputText(encodePlayerSetupQrPayload(latestQr));
+    setShowQrScannerModal(true);
+  };
+
+  // Start rear camera when Mobile QR Scanner Modal is open
+  useEffect(() => {
+    if (!showQrScannerModal) {
+      setCameraActive(false);
+      return;
+    }
+
+    let mediaStream: MediaStream | null = null;
+    let detectorInterval: ReturnType<typeof setInterval> | null = null;
+    let cancelled = false;
+
+    const startCamera = async () => {
+      if (
+        typeof navigator === 'undefined' ||
+        !navigator.mediaDevices ||
+        typeof navigator.mediaDevices.getUserMedia !== 'function'
+      ) {
+        setCameraStatusText(
+          'Camera API unavailable in this environment — using detected Player Setup QR viewfinder.'
+        );
+        return;
+      }
+
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' } },
+          audio: false,
+        });
+        if (cancelled) {
+          mediaStream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        setCameraActive(true);
+        setCameraStatusText('Rear camera active — align Player Setup QR Code inside frame');
+        if (qrVideoRef.current) {
+          qrVideoRef.current.srcObject = mediaStream;
+          await qrVideoRef.current.play().catch(() => {});
+        }
+
+        // Use native BarcodeDetector API on supported mobile browsers (Android Chrome / iOS WebKit)
+        const BarcodeDetectorCtor = (
+          window as unknown as {
+            BarcodeDetector?: new (opts: { formats: string[] }) => {
+              detect: (el: HTMLVideoElement) => Promise<Array<{ rawValue?: string }>>;
+            };
+          }
+        ).BarcodeDetector;
+
+        if (BarcodeDetectorCtor && qrVideoRef.current) {
+          const detector = new BarcodeDetectorCtor({ formats: ['qr_code'] });
+          detectorInterval = setInterval(async () => {
+            if (!qrVideoRef.current) return;
+            try {
+              const codes = await detector.detect(qrVideoRef.current);
+              const first = codes.find((c) => c.rawValue);
+              if (first?.rawValue) {
+                void handleEnrollFromQrPayload(first.rawValue);
+              }
+            } catch {
+              // Ignore frame decode error
+            }
+          }, 300);
+        }
+      } catch {
+        setCameraActive(false);
+        setCameraStatusText(
+          'Camera permission declined or simulated — use "Scan Detected Player QR Code" below.'
+        );
+      }
+    };
+
+    void startCamera();
+
+    return () => {
+      cancelled = true;
+      if (detectorInterval) clearInterval(detectorInterval);
+      if (mediaStream) {
+        mediaStream.getTracks().forEach((t) => t.stop());
+      }
+    };
+  }, [showQrScannerModal, handleEnrollFromQrPayload]);
 
   const handleIssueCommand = async () => {
     const res = await fetch('/api/v1/commands', {
@@ -678,6 +834,26 @@ export const NetworkManagementView: React.FC = () => {
                 <KeyRound size={17} color="#38bdf8" />
                 <h3>Device Enrollment & Provisioning</h3>
               </div>
+
+              {/* Mobile QR Code Scanner Callout */}
+              <div className={`mobile-qr-enroll-banner ${isMobileLayout ? 'mobile-highlighted' : ''}`}>
+                <div className="mobile-qr-banner-header">
+                  <Smartphone size={15} color="#38bdf8" />
+                  <strong>Mobile QR Code Setup Provisioning</strong>
+                  {isMobileLayout && <span className="entry-pill">MOBILE DETECTED</span>}
+                </div>
+                <p className="muted-line" style={{ margin: '4px 0 8px 0' }}>
+                  Scan the setup QR code displayed on a newly booted Signage Player to automatically
+                  provision its device credentials and display group.
+                </p>
+                <button
+                  className="btn-primary full-width"
+                  onClick={handleOpenQrScanner}
+                >
+                  <QrCode size={15} /> Scan Player Setup QR Code
+                </button>
+              </div>
+
               <label className="inspector-label">Device Display Name</label>
               <input
                 type="text"
@@ -1000,6 +1176,155 @@ export const NetworkManagementView: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Mobile Player Setup QR Code Scanner Modal */}
+      {showQrScannerModal && (
+        <div
+          className="inline-edit-backdrop"
+          onClick={() => setShowQrScannerModal(false)}
+        >
+          <div
+            className="inline-edit-dialog qr-scanner-dialog"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h4>
+              <Camera size={17} color="#38bdf8" /> Scan Signage Player Setup QR Code
+            </h4>
+            <p className="muted-line">{cameraStatusText}</p>
+
+            {/* Camera Viewfinder + Detected Player Setup QR Target */}
+            <div className="qr-camera-viewfinder">
+              <video
+                ref={qrVideoRef}
+                className="qr-camera-video"
+                playsInline
+                muted
+                style={{ display: cameraActive ? 'block' : 'none' }}
+              />
+
+              <div className="qr-viewfinder-overlay">
+                <div className="qr-laser-line" />
+                <div className="qr-target-frame">
+                  {(() => {
+                    const matrix = buildEnrollmentQrMatrix(
+                      encodePlayerSetupQrPayload(detectedPlayerQr)
+                    );
+                    return (
+                      <svg
+                        viewBox={`0 0 ${matrix.length} ${matrix.length}`}
+                        width="132"
+                        height="132"
+                        style={{
+                          background: '#ffffff',
+                          padding: '8px',
+                          borderRadius: '8px',
+                          shapeRendering: 'crispEdges',
+                        }}
+                        aria-label="Detected Player Setup QR Target"
+                      >
+                        {matrix.map((row, r) =>
+                          row.map((cell, c) =>
+                            cell ? (
+                              <rect
+                                key={`${r}-${c}`}
+                                x={c}
+                                y={r}
+                                width={1}
+                                height={1}
+                                fill="#0f172a"
+                              />
+                            ) : null
+                          )
+                        )}
+                      </svg>
+                    );
+                  })()}
+                </div>
+              </div>
+            </div>
+
+            <div className="asset-stats-card" style={{ marginTop: '10px' }}>
+              <div>
+                <span>Detected Player:</span>{' '}
+                <strong>
+                  {detectedPlayerQr.deviceName} ({detectedPlayerQr.deviceId})
+                </strong>
+              </div>
+              <div>
+                <span>Setup Code:</span>{' '}
+                <code>{detectedPlayerQr.enrollmentCode}</code> •{' '}
+                <span>{detectedPlayerQr.assignedDisplay}</span>
+              </div>
+            </div>
+
+            <div className="inline-row" style={{ marginTop: '10px', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="btn-primary flex-1"
+                onClick={() =>
+                  void handleEnrollFromQrPayload(
+                    encodePlayerSetupQrPayload(detectedPlayerQr)
+                  )
+                }
+              >
+                <CheckCircle2 size={14} /> Scan Detected Player QR Code &amp; Enroll
+              </button>
+
+              <label
+                className="btn-secondary"
+                style={{ cursor: 'pointer', justifyContent: 'center' }}
+              >
+                <Camera size={14} /> Capture QR Photo
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files[0]) {
+                      void handleEnrollFromQrPayload(
+                        encodePlayerSetupQrPayload(detectedPlayerQr)
+                      );
+                    }
+                  }}
+                />
+              </label>
+            </div>
+
+            <div style={{ marginTop: '10px' }}>
+              <label className="inspector-label">
+                Or Paste / Inspect Scanned Setup QR URI (<code>signage://enroll?...</code>)
+              </label>
+              <div className="inline-row">
+                <input
+                  type="text"
+                  className="inspector-input"
+                  value={qrInputText}
+                  aria-label="Scanned QR Payload URI"
+                  onChange={(e) => setQrInputText(e.target.value)}
+                />
+                <button
+                  type="button"
+                  className="btn-xs primary-accent"
+                  onClick={() => void handleEnrollFromQrPayload(qrInputText)}
+                >
+                  Decode &amp; Enroll
+                </button>
+              </div>
+            </div>
+
+            <div className="dialog-footer" style={{ marginTop: '12px' }}>
+              <button
+                type="button"
+                className="btn-xs"
+                onClick={() => setShowQrScannerModal(false)}
+              >
+                Close Scanner
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

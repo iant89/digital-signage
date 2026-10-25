@@ -1,0 +1,33 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Digital Signage Kiosk Player",
+  "version": "1.0.0",
+  "identifier": "com.apexsignage.kioskplayer",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "kiosk-main",
+        "title": "Digital Signage Player",
+        "width": 1920,
+        "height": 1080,
+        "fullscreen": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "resizable": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data: blob:; media-src 'self' data: blob:; style-src 'self' 'unsafe-inline'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["deb", "appimage", "msi", "dmg"]
+  }
+}

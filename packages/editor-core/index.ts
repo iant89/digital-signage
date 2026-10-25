@@ -3,7 +3,7 @@
 // Grouping, Layer Ordering, Snap Guides & IndexedDB Crash Recovery Persistence
 // ============================================================================
 
-import { SceneElement, SignageProject } from '@packages/project-model';
+import { AnimationTrack, SceneElement, SignageProject } from '@packages/project-model';
 import { createId, deepClone } from '@packages/shared';
 
 export type AlignmentMode = 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom';
@@ -163,6 +163,218 @@ export function groupElements(
     idSet.has(el.id) ? { ...el, parentGroupId: groupId } : el
   );
   return { elements: [...updated, groupEl], groupId };
+}
+
+export function ungroupElements(
+  elements: SceneElement[],
+  selectedIds: string[]
+): SceneElement[] {
+  const idSet = new Set(selectedIds);
+  const groupIdsToDissolve = new Set<string>();
+
+  for (const el of elements) {
+    if (idSet.has(el.id)) {
+      if (el.type === 'group') {
+        groupIdsToDissolve.add(el.id);
+      } else if (el.parentGroupId) {
+        groupIdsToDissolve.add(el.parentGroupId);
+      }
+    }
+  }
+
+  if (groupIdsToDissolve.size === 0) return elements;
+
+  return elements
+    .filter((el) => !(el.type === 'group' && groupIdsToDissolve.has(el.id)))
+    .map((el) =>
+      el.parentGroupId && groupIdsToDissolve.has(el.parentGroupId)
+        ? { ...el, parentGroupId: undefined }
+        : el
+    );
+}
+
+/**
+ * Updates a target element's properties and, if it belongs to a group (`parentGroupId`
+ * or `type === 'group'`), propagates position (`x`, `y`), size (`width`, `height`), and
+ * rotation (`rotation`) changes across all components in the group.
+ * Also shifts any position/rotation animation keyframes on moved/rotated elements by their
+ * spatial delta so slide-in / entrance animations always land at the actual authored position
+ * without affecting other objects in the group.
+ */
+export function applyElementOrGroupUpdate(
+  elements: SceneElement[],
+  animationTracks: AnimationTrack[],
+  elementId: string,
+  partial: Partial<SceneElement>
+): { elements: SceneElement[]; animationTracks: AnimationTrack[] } {
+  const target = elements.find((e) => e.id === elementId);
+  if (!target) {
+    return { elements, animationTracks };
+  }
+
+  const groupId = target.type === 'group' ? target.id : target.parentGroupId;
+  const oldX = target.x;
+  const oldY = target.y;
+  const oldW = Math.max(1, target.width);
+  const oldH = Math.max(1, target.height);
+  const oldRot = target.rotation || 0;
+
+  const newX = partial.x ?? oldX;
+  const newY = partial.y ?? oldY;
+  const newW = Math.max(1, partial.width ?? oldW);
+  const newH = Math.max(1, partial.height ?? oldH);
+  const newRot = partial.rotation ?? oldRot;
+
+  const dx = newX - oldX;
+  const dy = newY - oldY;
+  const scaleW = newW / oldW;
+  const scaleH = newH / oldH;
+  const dRot = newRot - oldRot;
+
+  const isResizing =
+    (partial.width !== undefined && partial.width !== oldW) ||
+    (partial.height !== undefined && partial.height !== oldH);
+  const isMovingOnly = !isResizing && (dx !== 0 || dy !== 0);
+  const isRotating = partial.rotation !== undefined && dRot !== 0;
+  const hasSpatialChange = isResizing || isMovingOnly || isRotating;
+
+  const elementDeltas = new Map<
+    string,
+    { dx: number; dy: number; dRot: number }
+  >();
+
+  let nextElements: SceneElement[];
+
+  if (!groupId || !hasSpatialChange) {
+    nextElements = elements.map((el) =>
+      el.id === elementId ? { ...el, ...partial } : el
+    );
+    if (dx !== 0 || dy !== 0 || dRot !== 0) {
+      elementDeltas.set(elementId, { dx, dy, dRot });
+    }
+  } else {
+    // Propagate spatial changes across all members of `groupId`
+    nextElements = elements.map((el) => {
+      if (el.id === elementId) {
+        elementDeltas.set(el.id, { dx, dy, dRot });
+        return { ...el, ...partial };
+      }
+
+      const isGroupMember =
+        el.parentGroupId === groupId && el.type !== 'group';
+      if (!isGroupMember) {
+        return el;
+      }
+
+      const mOldX = el.x;
+      const mOldY = el.y;
+      const mOldRot = el.rotation || 0;
+      let mNextX = el.x;
+      let mNextY = el.y;
+      let mNextW = el.width;
+      let mNextH = el.height;
+      let mNextRot = el.rotation || 0;
+
+      if (isMovingOnly) {
+        mNextX = Math.round(el.x + dx);
+        mNextY = Math.round(el.y + dy);
+      } else if (isResizing) {
+        mNextW = Math.max(20, Math.round(el.width * scaleW));
+        mNextH = Math.max(20, Math.round(el.height * scaleH));
+        mNextX = Math.round(newX + (el.x - oldX) * scaleW);
+        mNextY = Math.round(newY + (el.y - oldY) * scaleH);
+      }
+
+      if (isRotating) {
+        mNextRot = Math.round((el.rotation || 0) + dRot);
+      }
+
+      elementDeltas.set(el.id, {
+        dx: mNextX - mOldX,
+        dy: mNextY - mOldY,
+        dRot: mNextRot - mOldRot,
+      });
+
+      return {
+        ...el,
+        x: mNextX,
+        y: mNextY,
+        width: mNextW,
+        height: mNextH,
+        rotation: mNextRot,
+      };
+    });
+
+    // Recompute the bounding box of the group container element so it stays in sync
+    const updatedMembers = nextElements.filter(
+      (e) => e.parentGroupId === groupId && e.type !== 'group'
+    );
+    if (updatedMembers.length > 0) {
+      const minX = Math.min(...updatedMembers.map((e) => e.x));
+      const minY = Math.min(...updatedMembers.map((e) => e.y));
+      const maxX = Math.max(...updatedMembers.map((e) => e.x + e.width));
+      const maxY = Math.max(...updatedMembers.map((e) => e.y + e.height));
+      nextElements = nextElements.map((el) => {
+        if (el.id === groupId && el.type === 'group') {
+          return {
+            ...el,
+            x: minX,
+            y: minY,
+            width: Math.max(20, maxX - minX),
+            height: Math.max(20, maxY - minY),
+            rotation: isRotating ? Math.round((el.rotation || 0) + dRot) : el.rotation,
+          };
+        }
+        return el;
+      });
+    }
+  }
+
+  // Shift individual elements' own animation track keyframes by their spatial delta
+  // so slide-in / move / rotate animations stay anchored to each element's new actual position
+  // without affecting any other element in the group.
+  if (elementDeltas.size === 0 || animationTracks.length === 0) {
+    return { elements: nextElements, animationTracks };
+  }
+
+  const nextTracks = animationTracks.map((track) => {
+    const delta = elementDeltas.get(track.elementId);
+    if (!delta) return track;
+
+    if (track.property === 'x' && delta.dx !== 0) {
+      return {
+        ...track,
+        keyframes: track.keyframes.map((kf) =>
+          typeof kf.value === 'number'
+            ? { ...kf, value: Math.round(kf.value + delta.dx) }
+            : kf
+        ),
+      };
+    }
+    if (track.property === 'y' && delta.dy !== 0) {
+      return {
+        ...track,
+        keyframes: track.keyframes.map((kf) =>
+          typeof kf.value === 'number'
+            ? { ...kf, value: Math.round(kf.value + delta.dy) }
+            : kf
+        ),
+      };
+    }
+    if (track.property === 'rotation' && delta.dRot !== 0) {
+      return {
+        ...track,
+        keyframes: track.keyframes.map((kf) =>
+          typeof kf.value === 'number'
+            ? { ...kf, value: Math.round(kf.value + delta.dRot) }
+            : kf
+        ),
+      };
+    }
+    return track;
+  });
+
+  return { elements: nextElements, animationTracks: nextTracks };
 }
 
 export interface SnapGuide {

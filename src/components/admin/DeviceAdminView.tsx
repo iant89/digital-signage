@@ -210,6 +210,65 @@ export const DeviceAdminView: React.FC = () => {
               />{' '}
               Restore Last Active Playback State After Restart
             </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={kioskConfig.maintenanceAccessEnabled}
+                onChange={(e) =>
+                  updateKioskConfig({ maintenanceAccessEnabled: e.target.checked })
+                }
+              />{' '}
+              Enable Protected Maintenance Key Sequence &amp; 5-Tap Corner Gesture
+            </label>
+          </div>
+
+          <div className="pm-sub-section">
+            <div className="palette-title">
+              <KeyRound size={14} /> Protected Maintenance Key Sequence &amp; Session Timeout
+            </div>
+            <div className="inspector-grid-2">
+              <div>
+                <label className="inspector-label">Maintenance Hotkey Chord</label>
+                <input
+                  type="text"
+                  className="inspector-input"
+                  aria-label="Maintenance Hotkey Chord"
+                  value={kioskConfig.maintenanceHotkey}
+                  onChange={(e) => updateKioskConfig({ maintenanceHotkey: e.target.value })}
+                  placeholder="Ctrl+Shift+M"
+                />
+              </div>
+              <div>
+                <label className="inspector-label">Session Duration (sec)</label>
+                <input
+                  type="number"
+                  className="inspector-input"
+                  aria-label="Maintenance Session Duration"
+                  value={kioskConfig.maintenanceSessionDurationSec}
+                  min={10}
+                  step={30}
+                  onChange={(e) =>
+                    updateKioskConfig({
+                      maintenanceSessionDurationSec: Math.max(10, Number(e.target.value)),
+                    })
+                  }
+                />
+              </div>
+            </div>
+            <label className="inspector-label" style={{ marginTop: '6px' }}>
+              Sequential Remote / Hardware Key Sequence (comma-separated)
+            </label>
+            <input
+              type="text"
+              className="inspector-input"
+              aria-label="Sequential Maintenance Key Sequence"
+              value={
+                kioskConfig.maintenanceKeySequence ||
+                'ArrowUp,ArrowUp,ArrowDown,ArrowDown,ArrowLeft,ArrowRight'
+              }
+              onChange={(e) => updateKioskConfig({ maintenanceKeySequence: e.target.value })}
+              placeholder="ArrowUp,ArrowUp,ArrowDown,ArrowDown,ArrowLeft,ArrowRight"
+            />
           </div>
 
           {/* Protected Admin Credential Rotation */}

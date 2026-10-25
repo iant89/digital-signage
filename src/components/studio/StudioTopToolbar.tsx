@@ -25,6 +25,7 @@ import {
   Play,
   Download,
   Layers,
+  Unlink,
   RotateCcw,
   PanelLeft,
   PanelRight,
@@ -36,6 +37,7 @@ import { RESOLUTION_PRESETS } from '@packages/project-model';
 export const StudioTopToolbar: React.FC = () => {
   const {
     project,
+    activeSceneId,
     commitProjectChange,
     undo,
     redo,
@@ -52,6 +54,7 @@ export const StudioTopToolbar: React.FC = () => {
     alignSelected,
     distributeSelected,
     groupSelected,
+    ungroupSelected,
     canvasZoom,
     setCanvasZoom,
     showGrid,
@@ -100,6 +103,16 @@ export const StudioTopToolbar: React.FC = () => {
     RESOLUTION_PRESETS.find(
       (p) => p.width === project.settings.width && p.height === project.settings.height
     )?.id ?? 'custom';
+
+  const activeScene =
+    project.scenes.find((s) => s.id === activeSceneId) ?? project.scenes[0];
+  const hasGroupedSelection = Boolean(
+    activeScene &&
+      selectedElementIds.some((id) => {
+        const el = activeScene.elements.find((item) => item.id === id);
+        return Boolean(el && (el.parentGroupId || el.type === 'group'));
+      })
+  );
 
   return (
     <div className="studio-toolbar">
@@ -291,11 +304,19 @@ export const StudioTopToolbar: React.FC = () => {
         </button>
         <button
           className="icon-btn"
-          onClick={groupSelected}
+          onClick={() => groupSelected()}
           disabled={selectedElementIds.length < 2}
           title="Group Selected Elements"
         >
           <Layers size={15} />
+        </button>
+        <button
+          className="icon-btn"
+          onClick={() => ungroupSelected()}
+          disabled={!hasGroupedSelection}
+          title="Ungroup Selected Elements"
+        >
+          <Unlink size={15} />
         </button>
       </div>
 

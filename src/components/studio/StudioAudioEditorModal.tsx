@@ -6,7 +6,7 @@
 // Routing, Deleting Selected Sections & Combining Tracks
 // ============================================================================
 
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Music,
   Play,
@@ -47,9 +47,19 @@ export const StudioAudioEditorModal: React.FC = () => {
   );
   const [selectionStartMs, setSelectionStartMs] = useState<number>(1500);
   const [selectionEndMs, setSelectionEndMs] = useState<number>(4500);
+  const [hasSelection, setHasSelection] = useState<boolean>(true);
+  const [waveformDrag, setWaveformDrag] = useState<{
+    mode: 'new' | 'resize-start' | 'resize-end';
+    anchorMs: number;
+    fixedStartMs: number;
+    fixedEndMs: number;
+    moved: boolean;
+  } | null>(null);
   const [tracksToCombine, setTracksToCombine] = useState<string[]>([]);
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
+  const [previewPositionMs, setPreviewPositionMs] = useState<number | null>(null);
   const audioElRef = useRef<HTMLAudioElement | null>(null);
+  const waveformCanvasRef = useRef<HTMLDivElement | null>(null);
 
   const selectedTrack = useMemo(() => {
     return (
@@ -74,6 +84,130 @@ export const StudioAudioEditorModal: React.FC = () => {
     if (uploadedAsset) return uploadedAsset.dataUrl;
     return buildWavDataUrlForTrack(selectedTrack, 3.0);
   }, [selectedTrack, project.assets]);
+
+  const resolveWaveformTimeMs = useCallback(
+    (clientX: number, target: EventTarget | null): number => {
+      const duration = Math.max(1000, selectedTrack?.durationMs || 10000);
+      const barEl =
+        target instanceof HTMLElement
+          ? (target.closest('[data-bar-time-ms]') as HTMLElement | null)
+          : null;
+      const container = waveformCanvasRef.current;
+      const rect = container?.getBoundingClientRect();
+
+      if (rect && rect.width > 0 && clientX > 0) {
+        const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+        return Math.round(ratio * duration);
+      }
+      if (barEl && barEl.dataset.barTimeMs !== undefined) {
+        return Number(barEl.dataset.barTimeMs);
+      }
+      if (typeof clientX === 'number' && clientX > 0) {
+        const ratio = Math.max(0, Math.min(1, clientX / 640));
+        return Math.round(ratio * duration);
+      }
+      return 0;
+    },
+    [selectedTrack]
+  );
+
+  // Window-level drag listeners for waveform selection (new selection, move start, move end)
+  useEffect(() => {
+    if (!waveformDrag || !selectedTrack) return;
+    const duration = Math.max(1000, selectedTrack.durationMs || 10000);
+
+    const onMove = (e: PointerEvent | MouseEvent) => {
+      const timeMs = Math.max(
+        0,
+        Math.min(duration, resolveWaveformTimeMs(e.clientX, e.target))
+      );
+
+      if (waveformDrag.mode === 'new') {
+        const start = Math.min(waveformDrag.anchorMs, timeMs);
+        const end = Math.max(waveformDrag.anchorMs, timeMs);
+        if (Math.abs(timeMs - waveformDrag.anchorMs) > 0) {
+          setHasSelection(true);
+          setSelectionStartMs(start);
+          setSelectionEndMs(end);
+        }
+      } else if (waveformDrag.mode === 'resize-start') {
+        const nextStart = Math.min(timeMs, waveformDrag.fixedEndMs - 50);
+        setHasSelection(true);
+        setSelectionStartMs(Math.max(0, nextStart));
+        setSelectionEndMs(waveformDrag.fixedEndMs);
+      } else if (waveformDrag.mode === 'resize-end') {
+        const nextEnd = Math.max(timeMs, waveformDrag.fixedStartMs + 50);
+        setHasSelection(true);
+        setSelectionStartMs(waveformDrag.fixedStartMs);
+        setSelectionEndMs(Math.min(duration, nextEnd));
+      }
+    };
+
+    const onUp = () => {
+      setWaveformDrag(null);
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [waveformDrag, selectedTrack, resolveWaveformTimeMs]);
+
+  // Live audio preview playhead tracker (turns current position bar red)
+  useEffect(() => {
+    if (!isPreviewPlaying || !selectedTrack) {
+      setPreviewPositionMs(null);
+      return;
+    }
+
+    const trimStart = Math.max(0, selectedTrack.trimStartMs || 0);
+    const trimEnd = Math.max(
+      trimStart + 200,
+      selectedTrack.trimEndMs && selectedTrack.trimEndMs > trimStart
+        ? selectedTrack.trimEndMs
+        : selectedTrack.durationMs || 10000
+    );
+    const spanMs = Math.max(200, trimEnd - trimStart);
+    const startedAt = performance.now();
+
+    setPreviewPositionMs((prev) => (prev !== null ? prev : trimStart));
+
+    const timer = window.setInterval(() => {
+      const elapsed = performance.now() - startedAt;
+      if (!selectedTrack.loop && elapsed >= spanMs) {
+        setIsPreviewPlaying(false);
+        setPreviewPositionMs(null);
+        return;
+      }
+      const nextPos = trimStart + (elapsed % spanMs);
+      setPreviewPositionMs(Math.round(nextPos));
+    }, 60);
+
+    return () => window.clearInterval(timer);
+  }, [isPreviewPlaying, selectedTrack]);
+
+  // Identify the single waveform bar closest to the current audio preview position
+  const activePlayheadBarIndex = useMemo(() => {
+    if (!isPreviewPlaying || previewPositionMs === null || waveformBars.length === 0) {
+      return -1;
+    }
+    let bestIdx = 0;
+    let bestDist = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < waveformBars.length; i++) {
+      const dist = Math.abs(waveformBars[i].timeMs - previewPositionMs);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestIdx = i;
+      }
+    }
+    return bestIdx;
+  }, [isPreviewPlaying, previewPositionMs, waveformBars]);
 
   if (!showAudioEditorModal) return null;
 
@@ -176,6 +310,10 @@ export const StudioAudioEditorModal: React.FC = () => {
 
   const handleCropToSelection = () => {
     if (!selectedTrack) return;
+    if (!hasSelection) {
+      notify('warning', 'Click and drag on the waveform to select an audio section first.');
+      return;
+    }
     const start = Math.min(selectionStartMs, selectionEndMs);
     const end = Math.max(selectionStartMs + 200, selectionEndMs);
     updateTrack(selectedTrack.id, (t) => {
@@ -190,6 +328,10 @@ export const StudioAudioEditorModal: React.FC = () => {
 
   const handleDeleteSelectedSection = () => {
     if (!selectedTrack) return;
+    if (!hasSelection) {
+      notify('warning', 'Click and drag on the waveform to select an audio section first.');
+      return;
+    }
     const start = Math.min(selectionStartMs, selectionEndMs);
     const end = Math.max(selectionStartMs + 200, selectionEndMs);
     updateTrack(selectedTrack.id, (t) => {
@@ -234,17 +376,83 @@ export const StudioAudioEditorModal: React.FC = () => {
 
   const togglePlayPreview = () => {
     const el = audioElRef.current;
-    if (!el) return;
     if (isPreviewPlaying) {
-      el.pause();
-      el.currentTime = 0;
+      if (el) {
+        try {
+          el.pause();
+          el.currentTime = 0;
+        } catch {
+          // ignore media element errors in headless environments
+        }
+      }
       setIsPreviewPlaying(false);
+      setPreviewPositionMs(null);
     } else {
-      el.volume = selectedTrack?.volume ?? 0.8;
-      el.loop = Boolean(selectedTrack?.loop);
-      el.play()
-        .then(() => setIsPreviewPlaying(true))
-        .catch(() => setIsPreviewPlaying(false));
+      const startPos = selectedTrack?.trimStartMs ?? 0;
+      setIsPreviewPlaying(true);
+      setPreviewPositionMs(startPos);
+      if (el) {
+        try {
+          el.volume = selectedTrack?.volume ?? 0.8;
+          el.loop = Boolean(selectedTrack?.loop);
+          const playPromise = el.play();
+          if (playPromise && typeof playPromise.catch === 'function') {
+            playPromise.catch(() => {
+              // Keep simulated playhead running even if browser blocks autoplay
+            });
+          }
+        } catch {
+          // Keep simulated playhead running in headless environments
+        }
+      }
+    }
+  };
+
+  const handleWaveformMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!selectedTrack) return;
+    const duration = Math.max(1000, selectedTrack.durationMs || 10000);
+    const timeMs = Math.max(0, Math.min(duration, resolveWaveformTimeMs(e.clientX, e.target)));
+    const selMin = Math.min(selectionStartMs, selectionEndMs);
+    const selMax = Math.max(selectionStartMs, selectionEndMs);
+
+    if (hasSelection && timeMs >= selMin && timeMs <= selMax) {
+      // Clicked inside the existing selection:
+      // Left half -> move start of selection; Right half -> move end of selection
+      const selMid = (selMin + selMax) / 2;
+      if (timeMs <= selMid) {
+        const nextStart = Math.min(timeMs, selMax - 50);
+        setSelectionStartMs(Math.max(0, nextStart));
+        setSelectionEndMs(selMax);
+        setWaveformDrag({
+          mode: 'resize-start',
+          anchorMs: timeMs,
+          fixedStartMs: Math.max(0, nextStart),
+          fixedEndMs: selMax,
+          moved: false,
+        });
+      } else {
+        const nextEnd = Math.max(timeMs, selMin + 50);
+        setSelectionStartMs(selMin);
+        setSelectionEndMs(Math.min(duration, nextEnd));
+        setWaveformDrag({
+          mode: 'resize-end',
+          anchorMs: timeMs,
+          fixedStartMs: selMin,
+          fixedEndMs: Math.min(duration, nextEnd),
+          moved: false,
+        });
+      }
+    } else {
+      // Clicked outside the current selection (or when nothing is selected):
+      // Unselect immediately; if the user drags, a new selection range is swept out.
+      setHasSelection(false);
+      setWaveformDrag({
+        mode: 'new',
+        anchorMs: timeMs,
+        fixedStartMs: timeMs,
+        fixedEndMs: timeMs,
+        moved: false,
+      });
     }
   };
 
@@ -414,34 +622,56 @@ export const StudioAudioEditorModal: React.FC = () => {
                     {formatDurationMs(selectedTrack.trimEndMs || selectedTrack.durationMs)}
                   </span>
                   <span>
-                    <strong>Selected Region:</strong> {formatDurationMs(selectionStartMs)} –{' '}
-                    {formatDurationMs(selectionEndMs)}
+                    <strong>Selected Region:</strong>{' '}
+                    {hasSelection
+                      ? `${formatDurationMs(Math.min(selectionStartMs, selectionEndMs))} – ${formatDurationMs(Math.max(selectionStartMs, selectionEndMs))}`
+                      : 'None (Click & drag to select)'}
                   </span>
+                  {isPreviewPlaying && previewPositionMs !== null && (
+                    <span style={{ color: '#ef4444', fontWeight: 700 }}>
+                      ● Preview Position: {formatDurationMs(previewPositionMs)}
+                    </span>
+                  )}
                   <span>
                     <strong>Deleted Sections:</strong> {selectedTrack.deletedRegions.length}
                   </span>
                 </div>
 
-                <div className="audio-waveform-canvas">
-                  {waveformBars.map((bar) => {
+                <div
+                  ref={waveformCanvasRef}
+                  className="audio-waveform-canvas"
+                  aria-label="Audio Waveform Selector"
+                  title="Click and drag to select a section. Drag left side to move start, right side to move end. Click outside or double-click to unselect."
+                  onMouseDown={handleWaveformMouseDown}
+                  onDoubleClick={() => {
+                    setHasSelection(false);
+                    setWaveformDrag(null);
+                  }}
+                >
+                  {waveformBars.map((bar, idx) => {
+                    const selMin = Math.min(selectionStartMs, selectionEndMs);
+                    const selMax = Math.max(selectionStartMs, selectionEndMs);
                     const inSelection =
-                      bar.timeMs >= Math.min(selectionStartMs, selectionEndMs) &&
-                      bar.timeMs <= Math.max(selectionStartMs, selectionEndMs);
+                      hasSelection && bar.timeMs >= selMin && bar.timeMs <= selMax;
+                    const isCurrentPlayhead = idx === activePlayheadBarIndex;
+
                     return (
                       <div
                         key={bar.index}
+                        data-bar-index={idx}
+                        data-bar-time-ms={bar.timeMs}
                         className={`audio-wf-bar ${bar.inCropRange ? 'in-crop' : 'out-crop'} ${
                           bar.isDeleted ? 'deleted-cut' : ''
-                        } ${inSelection ? 'in-selection' : ''}`}
-                        style={{ height: `${Math.max(8, Math.round(bar.amplitude * 100))}%` }}
-                        title={`${formatDurationMs(bar.timeMs)}`}
-                        onClick={() => {
-                          if (bar.timeMs < selectionEndMs) {
-                            setSelectionStartMs(bar.timeMs);
-                          } else {
-                            setSelectionEndMs(bar.timeMs);
-                          }
+                        } ${inSelection ? 'in-selection' : ''} ${
+                          isCurrentPlayhead ? 'current-playhead-bar' : ''
+                        }`}
+                        style={{
+                          height: `${Math.max(8, Math.round(bar.amplitude * 100))}%`,
+                          backgroundColor: isCurrentPlayhead ? '#ef4444' : undefined,
                         }}
+                        title={`${formatDurationMs(bar.timeMs)}${
+                          isCurrentPlayhead ? ' (Current Preview Position)' : ''
+                        }`}
                       />
                     );
                   })}
@@ -454,11 +684,15 @@ export const StudioAudioEditorModal: React.FC = () => {
                     <input
                       type="number"
                       className="inspector-input"
+                      aria-label="Selection Start (ms)"
                       min={0}
                       max={selectedTrack.durationMs}
                       step={100}
-                      value={selectionStartMs}
-                      onChange={(e) => setSelectionStartMs(Number(e.target.value))}
+                      value={hasSelection ? Math.min(selectionStartMs, selectionEndMs) : 0}
+                      onChange={(e) => {
+                        setHasSelection(true);
+                        setSelectionStartMs(Number(e.target.value));
+                      }}
                     />
                   </div>
                   <div>
@@ -466,11 +700,15 @@ export const StudioAudioEditorModal: React.FC = () => {
                     <input
                       type="number"
                       className="inspector-input"
+                      aria-label="Selection End (ms)"
                       min={0}
                       max={selectedTrack.durationMs}
                       step={100}
-                      value={selectionEndMs}
-                      onChange={(e) => setSelectionEndMs(Number(e.target.value))}
+                      value={hasSelection ? Math.max(selectionStartMs, selectionEndMs) : 0}
+                      onChange={(e) => {
+                        setHasSelection(true);
+                        setSelectionEndMs(Number(e.target.value));
+                      }}
                     />
                   </div>
                 </div>

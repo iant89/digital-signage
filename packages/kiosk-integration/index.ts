@@ -23,6 +23,7 @@ export interface KioskConfiguration {
   restorePlaybackAfterRestart: boolean;
   maintenanceAccessEnabled: boolean;
   maintenanceHotkey: string;
+  maintenanceKeySequence: string;
   maintenanceSessionDurationSec: number;
 }
 
@@ -44,8 +45,149 @@ export const DEFAULT_KIOSK_CONFIGURATION: KioskConfiguration = {
   restorePlaybackAfterRestart: true,
   maintenanceAccessEnabled: true,
   maintenanceHotkey: 'Ctrl+Shift+M',
+  maintenanceKeySequence: 'ArrowUp,ArrowUp,ArrowDown,ArrowDown,ArrowLeft,ArrowRight',
   maintenanceSessionDurationSec: 300,
 };
+
+export interface HotkeyEventLike {
+  key: string;
+  code?: string;
+  ctrlKey?: boolean;
+  metaKey?: boolean;
+  shiftKey?: boolean;
+  altKey?: boolean;
+}
+
+/**
+ * Matches a keyboard event against a human-readable hotkey chord such as
+ * "Ctrl+Shift+M", "Ctrl+Alt+K", or "F12". Treats Ctrl or Meta (Cmd) as satisfying "Ctrl".
+ */
+export function matchesMaintenanceHotkey(
+  event: HotkeyEventLike,
+  hotkeySpec: string
+): boolean {
+  if (!hotkeySpec || !hotkeySpec.trim()) return false;
+  const parts = hotkeySpec
+    .split('+')
+    .map((p) => p.trim().toLowerCase())
+    .filter(Boolean);
+  if (parts.length === 0) return false;
+
+  const expectCtrl = parts.includes('ctrl') || parts.includes('control') || parts.includes('cmd') || parts.includes('meta');
+  const expectShift = parts.includes('shift');
+  const expectAlt = parts.includes('alt') || parts.includes('option');
+
+  const keyTokens = parts.filter(
+    (p) =>
+      p !== 'ctrl' &&
+      p !== 'control' &&
+      p !== 'cmd' &&
+      p !== 'meta' &&
+      p !== 'shift' &&
+      p !== 'alt' &&
+      p !== 'option'
+  );
+  if (keyTokens.length === 0) return false;
+  const targetKey = keyTokens[keyTokens.length - 1];
+
+  const hasCtrl = Boolean(event.ctrlKey || event.metaKey);
+  const hasShift = Boolean(event.shiftKey);
+  const hasAlt = Boolean(event.altKey);
+
+  if (expectCtrl !== hasCtrl || expectShift !== hasShift || expectAlt !== hasAlt) {
+    return false;
+  }
+
+  const eventKey = (event.key || '').toLowerCase();
+  const eventCode = (event.code || '').toLowerCase();
+  if (eventKey === targetKey) return true;
+  if (eventCode === `key${targetKey}` || eventCode === `digit${targetKey}` || eventCode === targetKey) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Tracks a multi-step hardware/remote key sequence (e.g.,
+ * "ArrowUp,ArrowUp,ArrowDown,ArrowDown,ArrowLeft,ArrowRight" or "m,a,i,n,t")
+ * with an inter-key expiration timeout so normal player remote sequences work.
+ */
+export class MaintenanceSequenceTracker {
+  private sequence: string[] = [];
+  private currentIndex = 0;
+  private lastKeyTimestampMs = 0;
+  private timeoutMs: number;
+
+  constructor(sequenceSpec: string, timeoutMs = 3500) {
+    this.timeoutMs = timeoutMs;
+    this.setSequence(sequenceSpec);
+  }
+
+  public setSequence(sequenceSpec: string): void {
+    this.sequence = sequenceSpec
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+    this.currentIndex = 0;
+    this.lastKeyTimestampMs = 0;
+  }
+
+  public reset(): void {
+    this.currentIndex = 0;
+    this.lastKeyTimestampMs = 0;
+  }
+
+  public feedKey(
+    key: string,
+    nowMs = Date.now()
+  ): { matched: boolean; progress: number; total: number } {
+    const total = this.sequence.length;
+    if (total === 0) {
+      return { matched: false, progress: 0, total: 0 };
+    }
+
+    const normalized = (key || '').trim().toLowerCase();
+    // Ignore bare modifier presses so holding Shift/Ctrl doesn't break sequence
+    if (
+      normalized === 'shift' ||
+      normalized === 'control' ||
+      normalized === 'alt' ||
+      normalized === 'meta'
+    ) {
+      return { matched: false, progress: this.currentIndex, total };
+    }
+
+    if (
+      this.currentIndex > 0 &&
+      this.lastKeyTimestampMs > 0 &&
+      nowMs - this.lastKeyTimestampMs > this.timeoutMs
+    ) {
+      this.currentIndex = 0;
+    }
+
+    if (normalized === this.sequence[this.currentIndex]) {
+      this.currentIndex += 1;
+      this.lastKeyTimestampMs = nowMs;
+      if (this.currentIndex >= total) {
+        this.currentIndex = 0;
+        this.lastKeyTimestampMs = 0;
+        return { matched: true, progress: total, total };
+      }
+      return { matched: false, progress: this.currentIndex, total };
+    }
+
+    // Check if the pressed key restarts the sequence from index 0
+    if (normalized === this.sequence[0]) {
+      this.currentIndex = 1;
+      this.lastKeyTimestampMs = nowMs;
+      return { matched: false, progress: 1, total };
+    }
+
+    this.currentIndex = 0;
+    this.lastKeyTimestampMs = 0;
+    return { matched: false, progress: 0, total };
+  }
+}
 
 export interface MaintenanceAuditEntry {
   id: string;

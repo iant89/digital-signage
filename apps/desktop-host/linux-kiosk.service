@@ -1,0 +1,23 @@
+[Unit]
+Description=Digital Signage Studio — Dedicated Kiosk Playback Host
+After=network-online.target graphical.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=signage-kiosk
+Group=signage-kiosk
+Environment=NODE_ENV=production
+Environment=DISPLAY=:0
+WorkingDirectory=/opt/digital-signage
+ExecStart=/opt/digital-signage/digital-signage-player --kiosk --fullscreen --no-first-run --disable-pinch
+Restart=on-failure
+RestartSec=3
+StartLimitIntervalSec=60
+StartLimitBurst=3
+NoNewPrivileges=true
+ProtectSystem=strict
+PrivateTmp=true
+
+[Install]
+WantedBy=graphical.target

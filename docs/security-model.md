@@ -1,0 +1,34 @@
+# Digital Signage Studio — Security Model
+
+## 1. Threat Model
+
+Digital Signage systems operate unattended in public or semi-public environments and receive content packages over networks or removable media. Primary threats include:
+1. **Malformed / Malicious `.signage` Archives**: Decompression bombs, integer overflows, path traversal (`../`), corrupted media, and unauthorized scripts.
+2. **Physical Kiosk Tampering**: Spectators attempting to exit full-screen playback, access the underlying OS, or modify display settings.
+3. **Unauthorized Network Commands**: Replay attacks, spoofed player enrollment, or unauthorized group deployments.
+4. **Sensitive Data Leakage**: Diagnostic logs exposing tokens, credentials, or private feed URLs.
+
+---
+
+## 2. Security Controls
+
+### 2.1 Binary Archive Hardening
+- Strict 64-bit bounds checking on `directoryOffset`, `directoryLength`, and every entry's `dataOffset + storedLength`.
+- Decompression streams enforce per-entry (`maxSingleEntryBytes`) and total archive (`maxTotalUncompressedBytes`) byte ceilings before allocation.
+- SHA-256 verification on every entry read.
+- Optional publisher signature verification over the canonical manifest and entry directory hashes.
+
+### 2.2 Script Sandbox Containment
+- Zero use of `eval()` or `new Function()` on package scripts.
+- Declarative, capability-gated script execution with per-tick instruction limits (`<= 500` ops) and state key limits.
+- Mandatory permission review during package import.
+
+### 2.3 Device Enrollment & Network Authentication
+- Single-use, time-expiring enrollment codes for player registration.
+- Unique per-device bearer credentials that can be individually revoked without affecting other displays.
+- Role-Based Access Control (`admin`, `operator`, `viewer`, `device`) enforced on all management endpoints.
+
+### 2.4 Command Integrity & Replay Protection
+- Every remote command carries a unique `id`, `idempotencyKey`, `createdAt`, and `expiresAt`.
+- Players reject expired commands or duplicate idempotency keys and never restart sessions that have already ended.
+- Every administrative action and authorization failure is recorded in `audit_log`.

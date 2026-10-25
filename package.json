@@ -1,0 +1,40 @@
+{
+  "name": "digital-signage-studio",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Digital Signage Studio, Custom .signage Binary Archive Format, Standalone Kiosk Player, and Network Synchronization Server",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5173",
+    "dev:server": "tsx server/index.ts",
+    "build": "tsc --noEmit && vite build && cp dist/index.html dist/404.html",
+    "build:pages": "tsc --noEmit && vite build && cp dist/index.html dist/404.html",
+    "preview": "vite preview --host 0.0.0.0 --port 4173",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.1",
+    "@fastify/websocket": "^11.0.1",
+    "fastify": "^5.1.0",
+    "lucide-react": "^0.460.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "ws": "^8.18.0",
+    "zustand": "^5.0.1"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.0.1",
+    "@types/node": "^22.9.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/ws": "^8.5.13",
+    "@vitejs/plugin-react": "^4.3.3",
+    "jsdom": "^25.0.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.5"
+  }
+}

@@ -27,7 +27,10 @@ import {
   reorderElementLayer,
   saveProjectPersistence,
 } from '@packages/editor-core';
-import { createPresetAnimationTracks } from '@packages/animation-engine';
+import {
+  PresetAnimationOptions,
+  createPresetAnimationTracks,
+} from '@packages/animation-engine';
 import {
   BuildPackageOptions,
   BuiltSignagePackage,
@@ -81,7 +84,10 @@ export interface StudioState {
   leftSidebarCollapsed: boolean;
   rightInspectorCollapsed: boolean;
   bottomTimelineCollapsed: boolean;
+  leftSidebarWidth: number;
+  rightInspectorWidth: number;
   isMobileLayout: boolean;
+  showAudioEditorModal: boolean;
 
   // Package & Player state
   builtPackages: BuiltSignagePackage[];
@@ -123,7 +129,14 @@ export interface StudioState {
   reorderLayer: (elementId: string, action: LayerOrderAction) => void;
   groupSelected: () => void;
 
-  applyAnimationPreset: (elementId: string, preset: AnimationPresetName, durationMs?: number) => void;
+  applyAnimationPreset: (
+    elementId: string,
+    preset: AnimationPresetName,
+    durationMs?: number,
+    options?: PresetAnimationOptions & { replaceExisting?: boolean }
+  ) => void;
+  clearElementTracks: (elementId: string) => void;
+  duplicateTrack: (trackId: string) => void;
   addOrUpdateKeyframe: (trackId: string, keyframe: Keyframe) => void;
   deleteTrack: (trackId: string) => void;
   toggleTrackMute: (trackId: string) => void;
@@ -148,7 +161,10 @@ export interface StudioState {
   toggleRightInspector: () => void;
   setBottomTimelineCollapsed: (collapsed: boolean) => void;
   toggleBottomTimeline: () => void;
+  setLeftSidebarWidth: (width: number) => void;
+  setRightInspectorWidth: (width: number) => void;
   setIsMobileLayout: (isMobile: boolean) => void;
+  setShowAudioEditorModal: (open: boolean) => void;
 
   exportSignagePackage: (options?: BuildPackageOptions) => BuiltSignagePackage;
   importSignagePackageBytes: (bytes: Uint8Array, openInPlayer?: boolean) => BuiltSignagePackage;
@@ -190,10 +206,13 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   leftSidebarCollapsed: false,
   rightInspectorCollapsed: false,
   bottomTimelineCollapsed: false,
+  leftSidebarWidth: 295,
+  rightInspectorWidth: 310,
   isMobileLayout:
     typeof window !== 'undefined' &&
     (window.innerWidth <= 768 ||
       /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '')),
+  showAudioEditorModal: false,
 
   builtPackages: [initialBuiltPkg],
   standalonePlayerPackage: initialBuiltPkg,
@@ -585,20 +604,51 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     }
   },
 
-  applyAnimationPreset: (elementId, preset, durationMs = 1000) => {
+  applyAnimationPreset: (elementId, preset, durationMs = 1000, options = {}) => {
     const { activeSceneId } = get();
     get().commitProjectChange(`Apply Animation ${preset}`, (draft) => {
       const scene = draft.scenes.find((s) => s.id === activeSceneId);
       if (!scene) return;
       const el = scene.elements.find((e) => e.id === elementId);
       if (!el) return;
-      scene.animationTracks = scene.animationTracks.filter((t) => t.elementId !== elementId);
+      if (preset === 'none' || options.replaceExisting) {
+        scene.animationTracks = scene.animationTracks.filter((t) => t.elementId !== elementId);
+      }
       if (preset !== 'none') {
-        const tracks = createPresetAnimationTracks(el, preset, durationMs);
+        const tracks = createPresetAnimationTracks(el, preset, durationMs, options);
         scene.animationTracks.push(...tracks);
       }
     });
-    set({ timelineTimeMs: 0, timelinePlaying: true });
+    set({ timelineTimeMs: options.delayMs ?? 0, timelinePlaying: true });
+  },
+
+  clearElementTracks: (elementId) => {
+    const { activeSceneId } = get();
+    get().commitProjectChange('Clear Element Motions', (draft) => {
+      const scene = draft.scenes.find((s) => s.id === activeSceneId);
+      if (!scene) return;
+      scene.animationTracks = scene.animationTracks.filter((t) => t.elementId !== elementId);
+    });
+  },
+
+  duplicateTrack: (trackId) => {
+    const { activeSceneId } = get();
+    get().commitProjectChange('Duplicate Animation Track', (draft) => {
+      const scene = draft.scenes.find((s) => s.id === activeSceneId);
+      if (!scene) return;
+      const orig = scene.animationTracks.find((t) => t.id === trackId);
+      if (!orig) return;
+      const nextDelay = Math.min(
+        Math.max(0, (scene.durationMs || 10000) - orig.durationMs),
+        (orig.delayMs || 0) + orig.durationMs
+      );
+      scene.animationTracks.push({
+        ...JSON.parse(JSON.stringify(orig)),
+        id: createId('track'),
+        delayMs: nextDelay,
+        label: `${orig.label || orig.property} (Copy)`,
+      });
+    });
   },
 
   addOrUpdateKeyframe: (trackId, keyframe) => {
@@ -717,6 +767,16 @@ export const useStudioStore = create<StudioState>((set, get) => ({
 
   toggleBottomTimeline: () => set({ bottomTimelineCollapsed: !get().bottomTimelineCollapsed }),
 
+  setLeftSidebarWidth: (width) => {
+    if (typeof width !== 'number' || Number.isNaN(width)) return;
+    set({ leftSidebarWidth: Math.max(200, Math.min(540, Math.round(width))) });
+  },
+
+  setRightInspectorWidth: (width) => {
+    if (typeof width !== 'number' || Number.isNaN(width)) return;
+    set({ rightInspectorWidth: Math.max(220, Math.min(580, Math.round(width))) });
+  },
+
   setIsMobileLayout: (isMobile) =>
     set({
       isMobileLayout: isMobile,
@@ -725,6 +785,8 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       bottomTimelineCollapsed: isMobile ? true : false,
       canvasZoom: isMobile ? 0.22 : 0.46,
     }),
+
+  setShowAudioEditorModal: (open) => set({ showAudioEditorModal: open }),
 
   exportSignagePackage: (options) => {
     const pkg = buildSignagePackage(get().project, options);

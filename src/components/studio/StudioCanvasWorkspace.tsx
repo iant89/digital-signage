@@ -3,7 +3,7 @@
 // Logical Reference Resolution, Rulers, Snap Guides, Resize/Rotate Handles
 // ============================================================================
 
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStudioStore } from '@/store/useStudioStore';
 import { computeSceneElementsAtTime } from '@packages/animation-engine';
 import { SnapGuide, computeSnappedPosition } from '@packages/editor-core';
@@ -57,6 +57,8 @@ export const StudioCanvasWorkspace: React.FC = () => {
   const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
   const [inlineEditingId, setInlineEditingId] = useState<string | null>(null);
   const canvasSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const lockedScrollRef = useRef<{ left: number; top: number } | null>(null);
 
   const activeScene =
     project.scenes.find((s) => s.id === activeSceneId) ?? project.scenes[0];
@@ -75,82 +77,133 @@ export const StudioCanvasWorkspace: React.FC = () => {
     return activeScene.elements.find((e) => e.id === selectedElementIds[0]) ?? null;
   }, [activeScene, selectedElementIds]);
 
-  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!dragState || !activeScene) return;
+  const applyDragCoordinates = useCallback(
+    (clientX: number, clientY: number) => {
+      if (!dragState || !activeScene) return;
 
-    if (dragState.kind === 'move') {
-      const dx = (e.clientX - dragState.startClientX) / canvasZoom;
-      const dy = (e.clientY - dragState.startClientY) / canvasZoom;
-      const rawX = Math.round(dragState.origX + dx);
-      const rawY = Math.round(dragState.origY + dy);
+      // Keep viewport scroll locked while dragging/resizing/rotating so wide scenes never auto-scroll
+      if (viewportRef.current && lockedScrollRef.current) {
+        viewportRef.current.scrollLeft = lockedScrollRef.current.left;
+        viewportRef.current.scrollTop = lockedScrollRef.current.top;
+      }
 
-      const snapped = computeSnappedPosition(
-        {
-          id: dragState.elementId,
-          x: rawX,
-          y: rawY,
-          width: dragState.width,
-          height: dragState.height,
-        },
-        activeScene.elements,
-        {
-          snapToGrid: project.settings.snapToGrid,
-          gridSizePx: project.settings.gridSizePx || 24,
-          snapToElements: project.settings.snapToElements,
-          canvasWidth: project.settings.width,
-          canvasHeight: project.settings.height,
+      if (dragState.kind === 'move') {
+        const dx = (clientX - dragState.startClientX) / canvasZoom;
+        const dy = (clientY - dragState.startClientY) / canvasZoom;
+        const rawX = Math.round(dragState.origX + dx);
+        const rawY = Math.round(dragState.origY + dy);
+
+        const snapped = computeSnappedPosition(
+          {
+            id: dragState.elementId,
+            x: rawX,
+            y: rawY,
+            width: dragState.width,
+            height: dragState.height,
+          },
+          activeScene.elements,
+          {
+            snapToGrid: project.settings.snapToGrid,
+            gridSizePx: project.settings.gridSizePx || 24,
+            snapToElements: project.settings.snapToElements,
+            canvasWidth: project.settings.width,
+            canvasHeight: project.settings.height,
+          }
+        );
+
+        setSnapGuides(snapped.guides);
+        updateElement(dragState.elementId, { x: snapped.x, y: snapped.y }, false);
+      } else if (dragState.kind === 'resize') {
+        const dx = (clientX - dragState.startClientX) / canvasZoom;
+        const dy = (clientY - dragState.startClientY) / canvasZoom;
+        let nextX = dragState.origX;
+        let nextY = dragState.origY;
+        let nextW = dragState.origW;
+        let nextH = dragState.origH;
+
+        const h = dragState.handle;
+        if (h.includes('e')) nextW = Math.max(24, Math.round(dragState.origW + dx));
+        if (h.includes('s')) nextH = Math.max(24, Math.round(dragState.origH + dy));
+        if (h.includes('w')) {
+          const wCandidate = Math.max(24, Math.round(dragState.origW - dx));
+          nextX = Math.round(dragState.origX + (dragState.origW - wCandidate));
+          nextW = wCandidate;
         }
-      );
+        if (h.includes('n')) {
+          const hCandidate = Math.max(24, Math.round(dragState.origH - dy));
+          nextY = Math.round(dragState.origY + (dragState.origH - hCandidate));
+          nextH = hCandidate;
+        }
 
-      setSnapGuides(snapped.guides);
-      updateElement(dragState.elementId, { x: snapped.x, y: snapped.y }, false);
-    } else if (dragState.kind === 'resize') {
-      const dx = (e.clientX - dragState.startClientX) / canvasZoom;
-      const dy = (e.clientY - dragState.startClientY) / canvasZoom;
-      let nextX = dragState.origX;
-      let nextY = dragState.origY;
-      let nextW = dragState.origW;
-      let nextH = dragState.origH;
+        if (dragState.aspectLocked && dragState.origH > 0) {
+          const ratio = dragState.origW / dragState.origH;
+          nextH = Math.max(24, Math.round(nextW / ratio));
+        }
 
-      const h = dragState.handle;
-      if (h.includes('e')) nextW = Math.max(24, Math.round(dragState.origW + dx));
-      if (h.includes('s')) nextH = Math.max(24, Math.round(dragState.origH + dy));
-      if (h.includes('w')) {
-        const wCandidate = Math.max(24, Math.round(dragState.origW - dx));
-        nextX = Math.round(dragState.origX + (dragState.origW - wCandidate));
-        nextW = wCandidate;
+        updateElement(
+          dragState.elementId,
+          { x: nextX, y: nextY, width: nextW, height: nextH },
+          false
+        );
+      } else if (dragState.kind === 'rotate') {
+        const rect = canvasSurfaceRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const localX = (clientX - rect.left) / canvasZoom;
+        const localY = (clientY - rect.top) / canvasZoom;
+        const angleRad = Math.atan2(localY - dragState.centerY, localX - dragState.centerX);
+        const angleDeg = Math.round((angleRad * 180) / Math.PI + 90);
+        updateElement(dragState.elementId, { rotation: angleDeg }, false);
       }
-      if (h.includes('n')) {
-        const hCandidate = Math.max(24, Math.round(dragState.origH - dy));
-        nextY = Math.round(dragState.origY + (dragState.origH - hCandidate));
-        nextH = hCandidate;
-      }
+    },
+    [dragState, activeScene, canvasZoom, project.settings, updateElement]
+  );
 
-      if (dragState.aspectLocked && dragState.origH > 0) {
-        const ratio = dragState.origW / dragState.origH;
-        nextH = Math.max(24, Math.round(nextW / ratio));
-      }
-
-      updateElement(
-        dragState.elementId,
-        { x: nextX, y: nextY, width: nextW, height: nextH },
-        false
-      );
-    } else if (dragState.kind === 'rotate') {
-      const rect = canvasSurfaceRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      const localX = (e.clientX - rect.left) / canvasZoom;
-      const localY = (e.clientY - rect.top) / canvasZoom;
-      const angleRad = Math.atan2(localY - dragState.centerY, localX - dragState.centerX);
-      const angleDeg = Math.round((angleRad * 180) / Math.PI + 90);
-      updateElement(dragState.elementId, { rotation: angleDeg }, false);
+  // Global window pointer listeners while dragging/resizing/rotating so wide scenes never scroll or drop pointer capture
+  useEffect(() => {
+    if (!dragState) {
+      lockedScrollRef.current = null;
+      return;
     }
+
+    if (viewportRef.current) {
+      lockedScrollRef.current = {
+        left: viewportRef.current.scrollLeft,
+        top: viewportRef.current.scrollTop,
+      };
+    }
+
+    const onWindowPointerMove = (e: PointerEvent) => {
+      e.preventDefault();
+      applyDragCoordinates(e.clientX, e.clientY);
+    };
+
+    const onWindowPointerUp = () => {
+      setDragState(null);
+      setSnapGuides([]);
+      lockedScrollRef.current = null;
+    };
+
+    window.addEventListener('pointermove', onWindowPointerMove, { passive: false });
+    window.addEventListener('pointerup', onWindowPointerUp);
+    window.addEventListener('pointercancel', onWindowPointerUp);
+    return () => {
+      window.removeEventListener('pointermove', onWindowPointerMove);
+      window.removeEventListener('pointerup', onWindowPointerUp);
+      window.removeEventListener('pointercancel', onWindowPointerUp);
+    };
+  }, [dragState, applyDragCoordinates]);
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragState) return;
+    e.preventDefault();
+    applyDragCoordinates(e.clientX, e.clientY);
   };
 
   const handlePointerUp = () => {
     if (dragState) {
       setDragState(null);
       setSnapGuides([]);
+      lockedScrollRef.current = null;
     }
   };
 
@@ -167,9 +220,16 @@ export const StudioCanvasWorkspace: React.FC = () => {
 
   return (
     <div
-      className="studio-canvas-viewport"
+      ref={viewportRef}
+      className={`studio-canvas-viewport ${dragState ? 'canvas-drag-active' : ''}`}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
+      onScroll={() => {
+        if (dragState && viewportRef.current && lockedScrollRef.current) {
+          viewportRef.current.scrollLeft = lockedScrollRef.current.left;
+          viewportRef.current.scrollTop = lockedScrollRef.current.top;
+        }
+      }}
       onClick={(e) => {
         if (e.target === e.currentTarget) {
           setSelectedElementIds([]);
@@ -239,8 +299,15 @@ export const StudioCanvasWorkspace: React.FC = () => {
             return (
               <div
                 key={el.id}
+                style={{ touchAction: 'none', userSelect: 'none' }}
                 onPointerDown={(e) => {
                   e.stopPropagation();
+                  e.preventDefault();
+                  try {
+                    e.currentTarget.setPointerCapture(e.pointerId);
+                  } catch {
+                    // Ignore in synthetic test environments
+                  }
                   if (e.shiftKey || e.metaKey || e.ctrlKey) {
                     setSelectedElementIds(
                       isSelected
@@ -317,8 +384,15 @@ export const StudioCanvasWorkspace: React.FC = () => {
                   <div
                     className="rotation-handle"
                     title="Drag to Rotate"
+                    style={{ touchAction: 'none', userSelect: 'none' }}
                     onPointerDown={(e) => {
                       e.stopPropagation();
+                      e.preventDefault();
+                      try {
+                        e.currentTarget.setPointerCapture(e.pointerId);
+                      } catch {
+                        // Ignore in synthetic test environments
+                      }
                       setDragState({
                         kind: 'rotate',
                         elementId: primarySelected.id,
@@ -333,8 +407,15 @@ export const StudioCanvasWorkspace: React.FC = () => {
                     <div
                       key={handle}
                       className={`resize-handle handle-${handle}`}
+                      style={{ touchAction: 'none', userSelect: 'none' }}
                       onPointerDown={(e) => {
                         e.stopPropagation();
+                        e.preventDefault();
+                        try {
+                          e.currentTarget.setPointerCapture(e.pointerId);
+                        } catch {
+                          // Ignore in synthetic test environments
+                        }
                         setDragState({
                           kind: 'resize',
                           elementId: primarySelected.id,

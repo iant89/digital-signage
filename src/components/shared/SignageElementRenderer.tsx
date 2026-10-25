@@ -9,6 +9,7 @@ import React, { useEffect, useMemo, useRef } from 'react';
 import { AssetItem } from '@packages/project-model';
 import { ComputedElementState } from '@packages/animation-engine';
 import { sha256Bytes } from '@packages/shared';
+import { buildRichQrMatrix, formatQrWidgetPayload } from '@/utils/qrCodeGenerator';
 
 interface Props {
   element: ComputedElementState;
@@ -451,48 +452,166 @@ export const SignageElementRenderer: React.FC<Props> = ({
     }
 
     if (wp.widgetKind === 'qrcode') {
-      const matrix = buildQrMatrix(wp.qrPayload || 'https://apex.example');
+      const formattedPayload = formatQrWidgetPayload(wp);
+      const ecLevel = wp.qrErrorCorrection || 'M';
+      const matrix = buildRichQrMatrix(formattedPayload, ecLevel);
       const dim = matrix.length;
+      const quietZone = Math.max(0, Math.min(6, wp.qrQuietZone ?? 1));
+      const totalView = dim + quietZone * 2;
+      const fgColor = wp.qrForeground || '#0f172a';
+      const bgColor = wp.qrBackground || '#f8fafc';
+      const eyeColor = wp.qrEyeColor || fgColor;
+      const dotStyle = wp.qrDotStyle || 'square';
+      const logoEnabled = Boolean(wp.qrLogoEnabled);
+      const logoSizePct = Math.max(12, Math.min(34, wp.qrLogoSizePercent ?? 22));
+      const logoAsset = wp.qrLogoAssetId
+        ? assets.find((a) => a.id === wp.qrLogoAssetId)
+        : undefined;
+      const logoImgSrc = logoAsset?.dataUrl || wp.qrLogoUrl || '';
+      const labelText =
+        wp.qrLabelText !== undefined
+          ? wp.qrLabelText
+          : wp.qrContentType === 'wifi'
+            ? `WI-FI: ${wp.qrWifiSsid || 'Guest-WiFi'}`
+            : wp.qrContentType === 'contact'
+              ? `VCARD: ${wp.qrContactName || 'Contact'}`
+              : 'SCAN FOR PASS';
+
       return (
         <div
           style={{
             ...wrapperStyle,
-            background: wp.qrBackground || '#f8fafc',
+            background: bgColor,
             borderRadius: '18px',
-            padding: '14px',
+            padding: '12px',
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
           }}
         >
-          <svg viewBox={`0 0 ${dim} ${dim}`} width="82%" height="82%">
-            {matrix.map((row, rIdx) =>
-              row.map((cell, cIdx) =>
-                cell ? (
-                  <rect
-                    key={`${rIdx}-${cIdx}`}
-                    x={cIdx}
-                    y={rIdx}
-                    width={1}
-                    height={1}
-                    fill={wp.qrForeground || '#0f172a'}
-                  />
-                ) : null
-              )
-            )}
-          </svg>
           <div
             style={{
-              fontSize: '12px',
-              fontWeight: 700,
-              color: '#0f172a',
-              marginTop: '6px',
-              fontFamily: 'Inter, sans-serif',
+              position: 'relative',
+              width: labelText ? '82%' : '92%',
+              height: labelText ? '82%' : '92%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
             }}
           >
-            SCAN FOR PASS
+            <svg
+              viewBox={`0 0 ${totalView} ${totalView}`}
+              width="100%"
+              height="100%"
+              style={{ shapeRendering: dotStyle === 'square' ? 'crispEdges' : 'geometricPrecision' }}
+            >
+              <rect x={0} y={0} width={totalView} height={totalView} fill={bgColor} />
+              {matrix.map((row, rIdx) =>
+                row.map((cell, cIdx) => {
+                  if (!cell.dark) return null;
+                  const x = cIdx + quietZone;
+                  const y = rIdx + quietZone;
+                  const fill = cell.isFinder ? eyeColor : fgColor;
+
+                  if (dotStyle === 'dots' && !cell.isFinder) {
+                    return (
+                      <circle
+                        key={`${rIdx}-${cIdx}`}
+                        cx={x + 0.5}
+                        cy={y + 0.5}
+                        r={0.44}
+                        fill={fill}
+                      />
+                    );
+                  }
+                  if (dotStyle === 'rounded' && !cell.isFinder) {
+                    return (
+                      <rect
+                        key={`${rIdx}-${cIdx}`}
+                        x={x + 0.04}
+                        y={y + 0.04}
+                        width={0.92}
+                        height={0.92}
+                        rx={0.28}
+                        fill={fill}
+                      />
+                    );
+                  }
+                  return (
+                    <rect
+                      key={`${rIdx}-${cIdx}`}
+                      x={x}
+                      y={y}
+                      width={1}
+                      height={1}
+                      fill={fill}
+                    />
+                  );
+                })
+              )}
+            </svg>
+
+            {/* Optional Center Logo Overlay */}
+            {logoEnabled && (
+              <div
+                style={{
+                  position: 'absolute',
+                  width: `${logoSizePct}%`,
+                  height: `${logoSizePct}%`,
+                  background: bgColor,
+                  border: `2px solid ${eyeColor}`,
+                  borderRadius: '22%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  overflow: 'hidden',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.22)',
+                  padding: '2px',
+                }}
+              >
+                {logoImgSrc ? (
+                  <img
+                    src={logoImgSrc}
+                    alt="QR Center Logo"
+                    style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                  />
+                ) : (
+                  <span
+                    style={{
+                      fontSize: '11px',
+                      fontWeight: 800,
+                      color: eyeColor,
+                      fontFamily: 'Inter, sans-serif',
+                      textAlign: 'center',
+                      lineHeight: 1,
+                    }}
+                  >
+                    {wp.qrLogoText || 'LOGO'}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
+
+          {labelText && (
+            <div
+              style={{
+                fontSize: '12px',
+                fontWeight: 700,
+                color: fgColor,
+                marginTop: '6px',
+                fontFamily: 'Inter, sans-serif',
+                textAlign: 'center',
+                maxWidth: '100%',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {labelText}
+            </div>
+          )}
         </div>
       );
     }
@@ -639,6 +758,579 @@ export const SignageElementRenderer: React.FC<Props> = ({
             <div style={{ fontSize: '14px', color: '#cbd5e1' }}>
               {Math.round(((wp.weatherTempC ?? 19) * 9) / 5 + 32)}°F
             </div>
+          </div>
+        </div>
+      );
+    }
+
+    // KPI METRIC & SPARKLINE CARD
+    if (wp.widgetKind === 'kpi') {
+      const points =
+        wp.kpiSparklinePoints && wp.kpiSparklinePoints.length >= 2
+          ? wp.kpiSparklinePoints
+          : [28, 42, 36, 58, 52, 76, 94];
+      const maxPt = Math.max(...points, 1);
+      const minPt = Math.min(...points, 0);
+      const span = Math.max(1, maxPt - minPt);
+      const svgCoords = points
+        .map((v, i) => {
+          const x = (i / (points.length - 1)) * 180;
+          const y = 52 - ((v - minPt) / span) * 44;
+          return `${x.toFixed(1)},${y.toFixed(1)}`;
+        })
+        .join(' ');
+      const trendColor =
+        wp.kpiTrend === 'down' ? '#f43f5e' : wp.kpiTrend === 'neutral' ? '#94a3b8' : '#10b981';
+      const trendArrow = wp.kpiTrend === 'down' ? '▼' : wp.kpiTrend === 'neutral' ? '●' : '▲';
+
+      return (
+        <div
+          style={{
+            ...wrapperStyle,
+            background: 'rgba(15, 23, 42, 0.92)',
+            border: `1px solid ${accent}55`,
+            borderRadius: '18px',
+            padding: '18px 22px',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'space-between',
+            fontFamily: 'Inter, system-ui, sans-serif',
+            color: '#f8fafc',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '13px', fontWeight: 700, color: '#94a3b8', letterSpacing: '1.2px' }}>
+              {(wp.kpiTitle || 'LIVE CAMPUS METRIC').toUpperCase()}
+            </span>
+            <span
+              style={{
+                padding: '3px 10px',
+                borderRadius: '999px',
+                fontSize: '12px',
+                fontWeight: 700,
+                background: `${trendColor}22`,
+                color: trendColor,
+              }}
+            >
+              {trendArrow} {wp.kpiDelta || '+18.4%'}
+            </span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', margin: '6px 0' }}>
+            <span style={{ fontSize: '44px', fontWeight: 800, color: '#f8fafc' }}>
+              {wp.kpiValue || '14,820'}
+            </span>
+            <span style={{ fontSize: '16px', color: accent, fontWeight: 600 }}>
+              {wp.kpiUnit || 'visitors'}
+            </span>
+          </div>
+          <svg viewBox="0 0 180 56" style={{ width: '100%', height: '54px', overflow: 'visible' }}>
+            <polyline
+              fill="none"
+              stroke={accent}
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              points={svgCoords}
+            />
+          </svg>
+        </div>
+      );
+    }
+
+    // BAR / LINE / DONUT CHART WIDGET
+    if (wp.widgetKind === 'chart') {
+      const rows =
+        wp.dataFeedRows && wp.dataFeedRows.length > 0
+          ? wp.dataFeedRows
+          : [
+              { label: '08:00', value: '45' },
+              { label: '10:00', value: '78' },
+              { label: '12:00', value: '94' },
+              { label: '14:00', value: '66' },
+              { label: '16:00', value: '85' },
+            ];
+      const numericVals = rows.map((r) => {
+        const parsed = Number.parseFloat(String(r.value).replace(/[^0-9.-]/g, ''));
+        return Number.isNaN(parsed) ? 50 : Math.max(0, parsed);
+      });
+      const maxVal = Math.max(...numericVals, 1);
+      const chartStyle = wp.chartType || 'bar';
+
+      return (
+        <div
+          style={{
+            ...wrapperStyle,
+            background: 'rgba(15, 23, 42, 0.92)',
+            border: `1px solid ${accent}44`,
+            borderRadius: '18px',
+            padding: '18px 22px',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'space-between',
+            fontFamily: 'Inter, system-ui, sans-serif',
+            color: '#f8fafc',
+          }}
+        >
+          <div style={{ fontSize: '14px', fontWeight: 700, color: accent, letterSpacing: '1.2px' }}>
+            {(wp.chartTitle || 'LIVE TELEMETRY & ANALYTICS CHART').toUpperCase()}
+          </div>
+          {chartStyle === 'horizontal-bar' ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1, justifyContent: 'center', marginTop: '10px' }}>
+              {rows.map((r, i) => {
+                const pct = Math.round((numericVals[i] / maxVal) * 100);
+                return (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <span style={{ width: '74px', fontSize: '13px', color: '#cbd5e1', fontWeight: 600 }}>
+                      {r.label}
+                    </span>
+                    <div style={{ flex: 1, height: '14px', background: '#1e293b', borderRadius: '999px', overflow: 'hidden' }}>
+                      <div style={{ width: `${pct}%`, height: '100%', background: accent, borderRadius: '999px' }} />
+                    </div>
+                    {wp.chartShowValues !== false && (
+                      <span style={{ width: '44px', textAlign: 'right', fontSize: '13px', fontWeight: 700 }}>
+                        {r.value}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'flex-end',
+                justifyContent: 'space-around',
+                gap: '12px',
+                flex: 1,
+                marginTop: '14px',
+                paddingTop: '12px',
+                borderBottom: '1px solid #334155',
+              }}
+            >
+              {rows.map((r, i) => {
+                const pct = Math.max(8, Math.round((numericVals[i] / maxVal) * 100));
+                return (
+                  <div
+                    key={i}
+                    style={{
+                      flex: 1,
+                      height: '100%',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'flex-end',
+                      gap: '6px',
+                    }}
+                  >
+                    {wp.chartShowValues !== false && (
+                      <span style={{ fontSize: '12px', fontWeight: 700, color: '#e2e8f0' }}>
+                        {r.value}
+                      </span>
+                    )}
+                    <div
+                      style={{
+                        width: '72%',
+                        height: `${pct}%`,
+                        background: `linear-gradient(180deg, ${accent}, ${accent}66)`,
+                        borderRadius: '6px 6px 0 0',
+                      }}
+                    />
+                    <span style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>
+                      {r.label}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // WAYFINDING & DIRECTIONAL SIGN WIDGET
+    if (wp.widgetKind === 'wayfinding') {
+      const dirMap: Record<string, string> = {
+        up: '↑',
+        'up-right': '↗',
+        right: '→',
+        'down-right': '↘',
+        down: '↓',
+        left: '←',
+        'up-left': '↖',
+        elevator: '🛗',
+        accessible: '♿',
+      };
+      const arrowGlyph = dirMap[wp.wayfindingDirection || 'up-right'] || '↗';
+
+      return (
+        <div
+          style={{
+            ...wrapperStyle,
+            background: 'rgba(15, 23, 42, 0.94)',
+            border: `2px solid ${accent}`,
+            borderRadius: '18px',
+            padding: '18px 24px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '22px',
+            fontFamily: 'Inter, system-ui, sans-serif',
+            color: '#f8fafc',
+          }}
+        >
+          <div
+            style={{
+              width: '76px',
+              height: '76px',
+              borderRadius: '16px',
+              background: accent,
+              color: '#0f172a',
+              fontSize: '46px',
+              fontWeight: 900,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+            }}
+          >
+            {arrowGlyph}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: '26px', fontWeight: 800, letterSpacing: '0.5px' }}>
+              {wp.wayfindingDestination || 'GRAND KEYNOTE AUDITORIUM'}
+            </div>
+            <div style={{ fontSize: '16px', color: '#cbd5e1', marginTop: '4px' }}>
+              {wp.wayfindingSubtext || 'Level 3 • East Concourse'} •{' '}
+              <strong style={{ color: accent }}>{wp.wayfindingDistance || '120m (2 min)'}</strong>
+            </div>
+          </div>
+          {wp.wayfindingStatus && (
+            <span
+              style={{
+                padding: '6px 14px',
+                borderRadius: '999px',
+                background: `${accent}22`,
+                border: `1px solid ${accent}`,
+                color: accent,
+                fontSize: '13px',
+                fontWeight: 800,
+                letterSpacing: '1px',
+              }}
+            >
+              {wp.wayfindingStatus}
+            </span>
+          )}
+        </div>
+      );
+    }
+
+    // QUEUE / NOW SERVING TICKET WIDGET
+    if (wp.widgetKind === 'queue') {
+      const waiting =
+        wp.queueWaitingTickets && wp.queueWaitingTickets.length > 0
+          ? wp.queueWaitingTickets
+          : ['A-205', 'A-206', 'B-104', 'C-019'];
+
+      return (
+        <div
+          style={{
+            ...wrapperStyle,
+            background: 'rgba(15, 23, 42, 0.94)',
+            border: `2px solid ${accent}`,
+            borderRadius: '18px',
+            padding: '18px 22px',
+            display: 'flex',
+            gap: '20px',
+            alignItems: 'stretch',
+            fontFamily: 'Inter, system-ui, sans-serif',
+            color: '#f8fafc',
+          }}
+        >
+          <div
+            style={{
+              flex: 1,
+              background: `${accent}18`,
+              border: `1px solid ${accent}66`,
+              borderRadius: '14px',
+              padding: '14px',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <div style={{ fontSize: '13px', fontWeight: 800, color: accent, letterSpacing: '1.5px' }}>
+              {(wp.queueTitle || 'NOW SERVING').toUpperCase()}
+            </div>
+            <div style={{ fontSize: '48px', fontWeight: 900, margin: '6px 0' }}>
+              {wp.queueCurrentTicket || 'A-204'}
+            </div>
+            <div
+              style={{
+                padding: '4px 12px',
+                borderRadius: '8px',
+                background: accent,
+                color: '#0f172a',
+                fontSize: '14px',
+                fontWeight: 800,
+              }}
+            >
+              {wp.queueCounterLabel || 'DESK 03'}
+            </div>
+          </div>
+          <div style={{ width: '42%', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '6px' }}>
+            <div style={{ fontSize: '12px', color: '#94a3b8', fontWeight: 700, letterSpacing: '1px' }}>
+              UP NEXT IN QUEUE
+            </div>
+            {waiting.slice(0, 4).map((ticket, i) => (
+              <div
+                key={i}
+                style={{
+                  padding: '6px 10px',
+                  borderRadius: '8px',
+                  background: '#1e293b',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  fontSize: '15px',
+                  fontWeight: 700,
+                }}
+              >
+                <span>{ticket}</span>
+                <span style={{ color: '#94a3b8', fontSize: '12px' }}>Wait #{i + 1}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // PROGRESS / CAPACITY GAUGE WIDGET
+    if (wp.widgetKind === 'progress') {
+      const val = wp.progressValue ?? 76;
+      const max = Math.max(1, wp.progressMax ?? 100);
+      const pct = Math.max(0, Math.min(100, Math.round((val / max) * 100)));
+      const radius = 38;
+      const circum = 2 * Math.PI * radius;
+      const dashOffset = circum - (pct / 100) * circum;
+
+      return (
+        <div
+          style={{
+            ...wrapperStyle,
+            background: 'rgba(15, 23, 42, 0.92)',
+            border: `1px solid ${accent}55`,
+            borderRadius: '18px',
+            padding: '18px 22px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '20px',
+            fontFamily: 'Inter, system-ui, sans-serif',
+            color: '#f8fafc',
+          }}
+        >
+          {wp.progressStyle !== 'linear' && (
+            <svg width="96" height="96" viewBox="0 0 96 96" style={{ flexShrink: 0 }}>
+              <circle cx="48" cy="48" r={radius} stroke="#1e293b" strokeWidth="9" fill="none" />
+              <circle
+                cx="48"
+                cy="48"
+                r={radius}
+                stroke={accent}
+                strokeWidth="9"
+                fill="none"
+                strokeLinecap="round"
+                strokeDasharray={circum}
+                strokeDashoffset={dashOffset}
+                transform="rotate(-90 48 48)"
+              />
+              <text
+                x="48"
+                y="53"
+                textAnchor="middle"
+                fill="#f8fafc"
+                fontSize="19"
+                fontWeight="800"
+              >
+                {pct}%
+              </text>
+            </svg>
+          )}
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: '13px', fontWeight: 700, color: accent, letterSpacing: '1.2px' }}>
+              {(wp.progressTitle || 'LIVE OCCUPANCY & CAPACITY').toUpperCase()}
+            </div>
+            <div style={{ fontSize: '30px', fontWeight: 800, marginTop: '4px' }}>
+              {val} <span style={{ fontSize: '16px', color: '#94a3b8' }}>/ {max} {wp.progressUnit || '%'}</span>
+            </div>
+            {wp.progressStyle === 'linear' && (
+              <div style={{ height: '12px', background: '#1e293b', borderRadius: '999px', overflow: 'hidden', marginTop: '8px' }}>
+                <div style={{ width: `${pct}%`, height: '100%', background: accent }} />
+              </div>
+            )}
+            <div style={{ fontSize: '14px', color: '#cbd5e1', marginTop: '6px' }}>
+              {wp.progressSubtitle || 'Operating within normal threshold'}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // SOCIAL WALL / SPOTLIGHT POST WIDGET
+    if (wp.widgetKind === 'social') {
+      return (
+        <div
+          style={{
+            ...wrapperStyle,
+            background: 'rgba(15, 23, 42, 0.92)',
+            border: `1px solid ${accent}55`,
+            borderRadius: '18px',
+            padding: '18px 22px',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'space-between',
+            fontFamily: 'Inter, system-ui, sans-serif',
+            color: '#f8fafc',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div
+                style={{
+                  width: '38px',
+                  height: '38px',
+                  borderRadius: '50%',
+                  background: accent,
+                  color: '#0f172a',
+                  fontWeight: 900,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                {(wp.socialAuthor || 'A')[0].toUpperCase()}
+              </div>
+              <div>
+                <div style={{ fontSize: '16px', fontWeight: 700 }}>
+                  {wp.socialAuthor || 'Apex Innovation Summit'} ✓
+                </div>
+                <div style={{ fontSize: '13px', color: accent }}>
+                  {wp.socialHandle || '@ApexGlobalHQ'}
+                </div>
+              </div>
+            </div>
+            <span style={{ fontSize: '12px', color: '#94a3b8' }}>
+              {wp.socialTimestamp || 'Just now'}
+            </span>
+          </div>
+          <div style={{ fontSize: '18px', lineHeight: 1.4, color: '#e2e8f0', margin: '10px 0' }}>
+            “{wp.socialPostText || 'Welcome to the 2026 Digital Signage & Synchronized Display Keynote! Tag #Apex2026 to be featured live.'}”
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#94a3b8' }}>
+            <span>♥ {wp.socialLikes || '1.4K'} Likes</span>
+            <span style={{ color: accent, fontWeight: 700 }}>
+              {(wp.socialPlatform || 'announcement').toUpperCase()}
+            </span>
+          </div>
+        </div>
+      );
+    }
+
+    // CALENDAR / ROOM BOOKING SCHEDULE WIDGET
+    if (wp.widgetKind === 'calendar') {
+      const status = wp.calendarRoomStatus || 'available';
+      const statusColor =
+        status === 'occupied' ? '#f43f5e' : status === 'upcoming' ? '#f59e0b' : '#10b981';
+      const statusLabel =
+        status === 'occupied' ? 'IN SESSION' : status === 'upcoming' ? 'STARTING SOON' : 'AVAILABLE';
+
+      return (
+        <div
+          style={{
+            ...wrapperStyle,
+            background: 'rgba(15, 23, 42, 0.94)',
+            borderLeft: `8px solid ${statusColor}`,
+            borderRadius: '16px',
+            padding: '18px 22px',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'space-between',
+            fontFamily: 'Inter, system-ui, sans-serif',
+            color: '#f8fafc',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '15px', fontWeight: 800, letterSpacing: '1px', color: '#cbd5e1' }}>
+              {wp.calendarRoomName || 'BOARDROOM 4B — SKYLINE SUITE'}
+            </span>
+            <span
+              style={{
+                padding: '4px 12px',
+                borderRadius: '999px',
+                background: `${statusColor}25`,
+                color: statusColor,
+                fontSize: '12px',
+                fontWeight: 800,
+              }}
+            >
+              ● {statusLabel}
+            </span>
+          </div>
+          <div style={{ margin: '8px 0' }}>
+            <div style={{ fontSize: '26px', fontWeight: 800 }}>
+              {wp.calendarCurrentEvent || 'Q4 Product Architecture Review'}
+            </div>
+            <div style={{ fontSize: '15px', color: '#94a3b8', marginTop: '4px' }}>
+              {wp.calendarOrganizer || '10:00 AM – 11:30 AM • Hosted by Executive Engineering'}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // CAP EMERGENCY / SAFETY NOTICE WIDGET
+    if (wp.widgetKind === 'alert') {
+      const sev = wp.alertSeverity || 'warning';
+      const sevColor = sev === 'critical' ? '#ef4444' : sev === 'info' ? '#38bdf8' : '#f59e0b';
+
+      return (
+        <div
+          style={{
+            ...wrapperStyle,
+            background: 'rgba(24, 10, 14, 0.95)',
+            border: `2px solid ${sevColor}`,
+            borderRadius: '16px',
+            padding: '18px 22px',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center',
+            gap: '8px',
+            fontFamily: 'Inter, system-ui, sans-serif',
+            color: '#f8fafc',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span
+              style={{
+                padding: '3px 10px',
+                borderRadius: '6px',
+                background: sevColor,
+                color: '#0f172a',
+                fontSize: '12px',
+                fontWeight: 900,
+                letterSpacing: '1.2px',
+              }}
+            >
+              ▲ {sev.toUpperCase()} ADVISORY
+            </span>
+            <span style={{ fontSize: '12px', color: '#cbd5e1', fontWeight: 700 }}>
+              {wp.alertZone || 'ALL CAMPUS ZONES'}
+            </span>
+          </div>
+          <div style={{ fontSize: '24px', fontWeight: 800, color: '#fff' }}>
+            {wp.alertTitle || 'FACILITY & TRANSIT NOTICE'}
+          </div>
+          <div style={{ fontSize: '15px', color: '#fde68a', lineHeight: 1.35 }}>
+            {wp.alertMessage || 'Please proceed to Concourse B for autonomous shuttle boarding.'}
           </div>
         </div>
       );

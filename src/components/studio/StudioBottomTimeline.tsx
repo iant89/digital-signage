@@ -3,7 +3,7 @@
 // Playhead Scrubber, Audio Waveform Visualization & Studio Status Bar
 // ============================================================================
 
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Play,
   Pause,
@@ -17,10 +17,16 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronUp,
+  Music,
 } from 'lucide-react';
 import { useStudioStore } from '@/store/useStudioStore';
 import { analyzeProjectAssets, validateProject } from '@packages/project-model';
 import { formatBytes, formatDurationMs } from '@packages/shared';
+import {
+  evaluateAudioTrackAtTime,
+  generateTrackWaveformBars,
+  isAudioTrackActiveOnScene,
+} from '@/utils/audioEngine';
 
 export const StudioBottomTimeline: React.FC = () => {
   const {
@@ -36,16 +42,62 @@ export const StudioBottomTimeline: React.FC = () => {
     setFrameDisplayMode,
     toggleTrackMute,
     toggleTrackLock,
+    commitProjectChange,
     saveStatus,
     bottomTimelineCollapsed,
     toggleBottomTimeline,
+    setShowAudioEditorModal,
   } = useStudioStore();
+
+  const [draggingTrackSpan, setDraggingTrackSpan] = useState<{
+    trackId: string;
+    startClientX: number;
+    laneWidthPx: number;
+    initialDelayMs: number;
+  } | null>(null);
 
   const activeScene =
     project.scenes.find((s) => s.id === activeSceneId) ?? project.scenes[0];
 
   const sceneDurationMs = Math.max(1000, activeScene?.durationMs || 10000);
   const fps = project.settings.frameRate || 30;
+
+  useEffect(() => {
+    if (!draggingTrackSpan || !activeScene) return;
+    const onMove = (e: PointerEvent | MouseEvent) => {
+      e.preventDefault();
+      const clientX = typeof e.clientX === 'number' ? e.clientX : draggingTrackSpan.startClientX;
+      const deltaPx = clientX - draggingTrackSpan.startClientX;
+      const deltaMs = Math.round(
+        (deltaPx / Math.max(1, draggingTrackSpan.laneWidthPx)) * sceneDurationMs
+      );
+      const nextDelayMs = Math.max(
+        0,
+        Math.min(sceneDurationMs - 100, draggingTrackSpan.initialDelayMs + deltaMs)
+      );
+      commitProjectChange(
+        'Move Track Start Time on Timeline',
+        (draft) => {
+          const sc = draft.scenes.find((s) => s.id === activeScene.id);
+          const tr = sc?.animationTracks.find((t) => t.id === draggingTrackSpan.trackId);
+          if (tr && !tr.locked) {
+            tr.delayMs = nextDelayMs;
+          }
+        }
+      );
+    };
+    const onUp = () => setDraggingTrackSpan(null);
+    window.addEventListener('pointermove', onMove, { passive: false });
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [draggingTrackSpan, activeScene, sceneDurationMs, commitProjectChange]);
 
   useEffect(() => {
     if (!timelinePlaying) return;
@@ -142,6 +194,14 @@ export const StudioBottomTimeline: React.FC = () => {
 
         <button
           className="btn-xs"
+          onClick={() => setShowAudioEditorModal(true)}
+          title="Open Simple Audio Editor & Background Music Mixer"
+        >
+          <Music size={13} /> Audio Editor ({project.audioTracks?.length ?? 0})
+        </button>
+
+        <button
+          className="btn-xs"
           onClick={toggleBottomTimeline}
           title={bottomTimelineCollapsed ? 'Expand Timeline Tracks' : 'Collapse Timeline Tracks'}
           aria-label="Collapse or Expand Timeline"
@@ -167,6 +227,42 @@ export const StudioBottomTimeline: React.FC = () => {
                 <div className="track-label-col">
                   <span className="track-el-name">{el?.name || track.elementId}</span>
                   <span className="track-prop-pill">{track.property}</span>
+                  <input
+                    type="number"
+                    className="inspector-input"
+                    style={{
+                      width: '62px',
+                      height: '20px',
+                      padding: '1px 4px',
+                      fontSize: '10px',
+                    }}
+                    title={
+                      frameDisplayMode === 'frames'
+                        ? `Motion Start Frame (@ ${fps} FPS)`
+                        : 'Motion Start Time (ms)'
+                    }
+                    aria-label={`Timeline Start for ${track.property}`}
+                    min={0}
+                    step={frameDisplayMode === 'frames' ? 1 : 50}
+                    value={
+                      frameDisplayMode === 'frames'
+                        ? Math.round(((track.delayMs || 0) / 1000) * fps)
+                        : track.delayMs || 0
+                    }
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => {
+                      const raw = Math.max(0, Number(e.target.value));
+                      const nextDelayMs =
+                        frameDisplayMode === 'frames'
+                          ? Math.round((raw / fps) * 1000)
+                          : raw;
+                      commitProjectChange('Set Motion Start on Timeline', (draft) => {
+                        const sc = draft.scenes.find((s) => s.id === activeScene.id);
+                        const tr = sc?.animationTracks.find((t) => t.id === track.id);
+                        if (tr && !tr.locked) tr.delayMs = nextDelayMs;
+                      });
+                    }}
+                  />
                   <div
                     className="track-mini-btns"
                     onClick={(e) => e.stopPropagation()}
@@ -199,13 +295,27 @@ export const StudioBottomTimeline: React.FC = () => {
                     setTimelineTimeMs(Math.round(ratio * sceneDurationMs));
                   }}
                 >
-                  {/* Active Duration Span */}
+                  {/* Active Duration Span (Draggable to adjust start time/frame on timeline) */}
                   <div
                     className="track-span-highlight"
+                    title={`Drag horizontally to move start time (${track.delayMs || 0}ms / F${Math.round(((track.delayMs || 0) / 1000) * fps)})`}
                     style={{
                       left: `${((track.delayMs || 0) / sceneDurationMs) * 100}%`,
                       width: `${Math.min(100, (track.durationMs / sceneDurationMs) * 100)}%`,
                       opacity: track.muted ? 0.35 : 0.85,
+                      cursor: track.locked ? 'not-allowed' : 'grab',
+                    }}
+                    onMouseDown={(e) => {
+                      if (track.locked) return;
+                      e.stopPropagation();
+                      const laneEl = e.currentTarget.parentElement;
+                      const laneWidthPx = laneEl?.getBoundingClientRect().width || 600;
+                      setDraggingTrackSpan({
+                        trackId: track.id,
+                        startClientX: e.clientX,
+                        laneWidthPx,
+                        initialDelayMs: track.delayMs || 0,
+                      });
                     }}
                   />
 
@@ -241,31 +351,80 @@ export const StudioBottomTimeline: React.FC = () => {
             );
           })}
 
-        {/* Audio Waveform Synchronization Track */}
-        <div className="timeline-track-row audio-waveform-row">
-          <div className="track-label-col">
-            <span className="track-el-name">Scene Audio Sync</span>
-            <span className="track-prop-pill">waveform</span>
-          </div>
-          <div className="track-lane-bar waveform-bars">
-            {Array.from({ length: 48 }).map((_, idx) => {
-              const h = 25 + Math.round(Math.abs(Math.sin(idx * 0.65)) * 65);
+        {/* Project Background / Scene / Environment Audio Tracks */}
+        {activeScene &&
+          (project.audioTracks ?? [])
+            .filter((at) => isAudioTrackActiveOnScene(at, activeScene.id))
+            .map((audioTrack) => {
+              const wfBars = generateTrackWaveformBars(audioTrack, 48);
+              const evalState = evaluateAudioTrackAtTime(
+                audioTrack,
+                activeScene.id,
+                timelineTimeMs,
+                sceneDurationMs
+              );
+              const startPct = Math.min(
+                98,
+                ((audioTrack.startAtMs || 0) / sceneDurationMs) * 100
+              );
+              const stopMs =
+                audioTrack.stopAtMs && audioTrack.stopAtMs > (audioTrack.startAtMs || 0)
+                  ? audioTrack.stopAtMs
+                  : sceneDurationMs;
+              const widthPct = Math.max(
+                4,
+                Math.min(100 - startPct, ((stopMs - (audioTrack.startAtMs || 0)) / sceneDurationMs) * 100)
+              );
+
               return (
                 <div
-                  key={idx}
-                  className="waveform-bar-tick"
-                  style={{ height: `${h}%` }}
-                />
+                  key={audioTrack.id}
+                  className="timeline-track-row audio-waveform-row"
+                  onClick={() => setShowAudioEditorModal(true)}
+                  title="Click to open in Studio Audio Editor"
+                >
+                  <div className="track-label-col">
+                    <span className="track-el-name">{audioTrack.name}</span>
+                    <span className="track-prop-pill">{audioTrack.scope}</span>
+                    <span className="muted-line" style={{ fontSize: '10px' }}>
+                      {evalState.playing
+                        ? `${Math.round(evalState.instantGain * 100)}%`
+                        : 'idle'}
+                    </span>
+                  </div>
+                  <div
+                    className="track-lane-bar waveform-bars"
+                    style={{ position: 'relative' }}
+                  >
+                    <div
+                      className="track-span-highlight"
+                      style={{
+                        left: `${startPct}%`,
+                        width: `${widthPct}%`,
+                        background: 'rgba(16, 185, 129, 0.18)',
+                        borderColor: '#10b981',
+                      }}
+                    />
+                    {wfBars.map((bar) => (
+                      <div
+                        key={bar.index}
+                        className="waveform-bar-tick"
+                        style={{
+                          height: `${Math.max(12, Math.round(bar.amplitude * 90))}%`,
+                          opacity: bar.isDeleted ? 0.15 : bar.inCropRange ? 0.9 : 0.3,
+                        }}
+                      />
+                    ))}
+                    <div
+                      className="track-playhead-line"
+                      style={{
+                        left: `${Math.min(100, (timelineTimeMs / sceneDurationMs) * 100)}%`,
+                      }}
+                    />
+                  </div>
+                </div>
               );
             })}
-            <div
-              className="track-playhead-line"
-              style={{
-                left: `${Math.min(100, (timelineTimeMs / sceneDurationMs) * 100)}%`,
-              }}
-            />
-          </div>
-        </div>
         </div>
       )}
 

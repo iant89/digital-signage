@@ -22,8 +22,13 @@ import {
   ArrowLeft,
   QrCode,
   Smartphone,
+  Volume2,
 } from 'lucide-react';
 import { useStudioStore } from '@/store/useStudioStore';
+import {
+  evaluateAudioTrackAtTime,
+  isAudioTrackActiveOnScene,
+} from '@/utils/audioEngine';
 import {
   PlayerSetupQrPayload,
   buildEnrollmentQrMatrix,
@@ -285,6 +290,17 @@ export const StandaloneSignagePlayer: React.FC = () => {
 
   const { project, pkg, report } = loadedPackageData;
   const activeScene = timelineState.activeScene;
+  const activeAudioStatuses = (project.audioTracks ?? [])
+    .filter((track) => isAudioTrackActiveOnScene(track, activeScene.id))
+    .map((track) => ({
+      track,
+      evalState: evaluateAudioTrackAtTime(
+        track,
+        activeScene.id,
+        timelineState.sceneElapsedMs,
+        timelineState.sceneDurationMs
+      ),
+    }));
 
   return (
     <div
@@ -364,6 +380,25 @@ export const StandaloneSignagePlayer: React.FC = () => {
               {formatDurationMs(timelineState.sceneDurationMs)})
             </span>
             <span className="hud-metric">{estimatedFps} FPS</span>
+            {activeAudioStatuses.length > 0 && (
+              <span
+                className="hud-metric"
+                title={activeAudioStatuses
+                  .map(
+                    ({ track, evalState }) =>
+                      `${track.name} (${track.scope}, ${track.channel}): ${
+                        evalState.playing
+                          ? `${Math.round(evalState.instantGain * 100)}%`
+                          : 'Standby'
+                      }`
+                  )
+                  .join(' | ')}
+              >
+                <Volume2 size={12} style={{ verticalAlign: 'middle', marginRight: 4 }} />
+                Audio ({activeAudioStatuses.filter((a) => a.evalState.playing).length}/
+                {activeAudioStatuses.length} active)
+              </span>
+            )}
           </div>
 
           {/* Offline, Watchdog & Kiosk Lock Controls */}

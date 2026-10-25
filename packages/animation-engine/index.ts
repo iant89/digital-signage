@@ -204,55 +204,74 @@ export function computeSceneElementsAtTime(
       border: el.border ? { ...el.border } : undefined,
     };
 
-    for (const track of elTracks) {
-      const val = evaluateTrackAtTime(track, currentTimelineMs);
-      if (val === null) continue;
+    // Group tracks by property and sort by delayMs ascending so multiple motions
+    // on the same object & property execute in timeline sequence without later
+    // tracks' backwards-fill overwriting earlier tracks before their delayMs start time.
+    const byProp = new Map<AnimatableProperty, AnimationTrack[]>();
+    for (const tr of elTracks) {
+      const list = byProp.get(tr.property) ?? [];
+      list.push(tr);
+      byProp.set(tr.property, list);
+    }
 
-      switch (track.property) {
-        case 'x':
-          if (typeof val === 'number') computed.x = val;
-          break;
-        case 'y':
-          if (typeof val === 'number') computed.y = val;
-          break;
-        case 'width':
-          if (typeof val === 'number') computed.width = Math.max(1, val);
-          break;
-        case 'height':
-          if (typeof val === 'number') computed.height = Math.max(1, val);
-          break;
-        case 'scaleX':
-          if (typeof val === 'number') computed.scaleX = val;
-          break;
-        case 'scaleY':
-          if (typeof val === 'number') computed.scaleY = val;
-          break;
-        case 'rotation':
-          if (typeof val === 'number') computed.rotation = val;
-          break;
-        case 'opacity':
-          if (typeof val === 'number') computed.opacity = clamp(val, 0, 1);
-          break;
-        case 'backgroundColor':
-          if (typeof val === 'string') computed.backgroundColor = val;
-          break;
-        case 'color':
-          if (typeof val === 'string' && computed.textProps) computed.textProps.color = val;
-          break;
-        case 'borderRadius':
-          if (typeof val === 'number' && computed.border) computed.border.radius = Math.max(0, val);
-          break;
-        case 'textReveal':
-          if (typeof val === 'number') computed.textRevealRatio = clamp(val, 0, 1);
-          break;
-        case 'cropProgress':
-          if (typeof val === 'number') computed.cropProgress = clamp(val, 0, 1);
-          break;
-        case 'volume':
-          if (typeof val === 'number' && computed.mediaProps) {
-            computed.mediaProps.volume = clamp(val, 0, 1);
-          }
-          break;
+    for (const [prop, propTracks] of byProp.entries()) {
+      const sortedTracks = [...propTracks].sort((a, b) => (a.delayMs || 0) - (b.delayMs || 0));
+      for (let idx = 0; idx < sortedTracks.length; idx++) {
+        const track = sortedTracks[idx];
+        // If this is a subsequent track on the same property (idx > 0), only apply it
+        // once the timeline has reached its start time (`delayMs`).
+        if (idx > 0 && currentTimelineMs < (track.delayMs || 0)) {
+          continue;
+        }
+        const val = evaluateTrackAtTime(track, currentTimelineMs);
+        if (val === null) continue;
+
+        switch (prop) {
+          case 'x':
+            if (typeof val === 'number') computed.x = val;
+            break;
+          case 'y':
+            if (typeof val === 'number') computed.y = val;
+            break;
+          case 'width':
+            if (typeof val === 'number') computed.width = Math.max(1, val);
+            break;
+          case 'height':
+            if (typeof val === 'number') computed.height = Math.max(1, val);
+            break;
+          case 'scaleX':
+            if (typeof val === 'number') computed.scaleX = val;
+            break;
+          case 'scaleY':
+            if (typeof val === 'number') computed.scaleY = val;
+            break;
+          case 'rotation':
+            if (typeof val === 'number') computed.rotation = val;
+            break;
+          case 'opacity':
+            if (typeof val === 'number') computed.opacity = clamp(val, 0, 1);
+            break;
+          case 'backgroundColor':
+            if (typeof val === 'string') computed.backgroundColor = val;
+            break;
+          case 'color':
+            if (typeof val === 'string' && computed.textProps) computed.textProps.color = val;
+            break;
+          case 'borderRadius':
+            if (typeof val === 'number' && computed.border) computed.border.radius = Math.max(0, val);
+            break;
+          case 'textReveal':
+            if (typeof val === 'number') computed.textRevealRatio = clamp(val, 0, 1);
+            break;
+          case 'cropProgress':
+            if (typeof val === 'number') computed.cropProgress = clamp(val, 0, 1);
+            break;
+          case 'volume':
+            if (typeof val === 'number' && computed.mediaProps) {
+              computed.mediaProps.volume = clamp(val, 0, 1);
+            }
+            break;
+        }
       }
     }
 
@@ -260,33 +279,55 @@ export function computeSceneElementsAtTime(
   });
 }
 
+export interface PresetAnimationOptions {
+  delayMs?: number;
+  rotationAngleDeg?: number;
+  distancePx?: number;
+  scaleFactor?: number;
+  easing?: EasingFunction;
+  repeatCount?: number;
+  reverse?: boolean;
+  label?: string;
+}
+
 export function createPresetAnimationTracks(
   element: SceneElement,
   preset: AnimationPresetName,
-  durationMs = 1000
+  durationMs = 1000,
+  options: PresetAnimationOptions = {}
 ): AnimationTrack[] {
+  const delayMs = Math.max(0, options.delayMs ?? 0);
   const makeTrack = (
     property: AnimatableProperty,
     startVal: number | string,
     endVal: number | string,
-    easing: EasingFunction = 'easeOut',
-    repeatCount = 1,
-    reverse = false
+    easing: EasingFunction = options.easing ?? 'easeOut',
+    repeatCount = options.repeatCount ?? 1,
+    reverse = options.reverse ?? false,
+    extra: Partial<AnimationTrack> = {}
   ): AnimationTrack => ({
     id: createId('track'),
     elementId: element.id,
     property,
     preset,
+    label: options.label || `${preset} (${property})`,
     durationMs,
-    delayMs: 0,
+    delayMs,
     repeatCount,
     reverse,
     fillMode: 'both',
+    ...extra,
     keyframes: [
       { id: createId('kf'), timeMs: 0, value: startVal, easing },
       { id: createId('kf'), timeMs: durationMs, value: endVal, easing },
     ],
   });
+
+  const dist = options.distancePx ?? 260;
+  const vDist = options.distancePx ?? 200;
+  const angle = options.rotationAngleDeg ?? 180;
+  const scaleIn = options.scaleFactor ?? 0.4;
+  const scaleOut = options.scaleFactor ?? 1.35;
 
   switch (preset) {
     case 'fade-in':
@@ -295,55 +336,178 @@ export function createPresetAnimationTracks(
       return [makeTrack('opacity', element.opacity || 1, 0, 'easeIn')];
     case 'slide-left':
       return [
-        makeTrack('x', element.x + 260, element.x, 'easeOut'),
+        makeTrack('x', element.x + dist, element.x, 'easeOut', 1, false, { distancePx: dist }),
         makeTrack('opacity', 0, element.opacity || 1, 'easeOut'),
       ];
     case 'slide-right':
       return [
-        makeTrack('x', element.x - 260, element.x, 'easeOut'),
+        makeTrack('x', element.x - dist, element.x, 'easeOut', 1, false, { distancePx: dist }),
         makeTrack('opacity', 0, element.opacity || 1, 'easeOut'),
       ];
     case 'slide-up':
       return [
-        makeTrack('y', element.y + 200, element.y, 'easeOut'),
+        makeTrack('y', element.y + vDist, element.y, 'easeOut', 1, false, { distancePx: vDist }),
         makeTrack('opacity', 0, element.opacity || 1, 'easeOut'),
       ];
     case 'slide-down':
       return [
-        makeTrack('y', element.y - 200, element.y, 'easeOut'),
+        makeTrack('y', element.y - vDist, element.y, 'easeOut', 1, false, { distancePx: vDist }),
         makeTrack('opacity', 0, element.opacity || 1, 'easeOut'),
       ];
     case 'zoom-in':
       return [
-        makeTrack('scaleX', 0.4, element.scaleX || 1, 'easeOut'),
-        makeTrack('scaleY', 0.4, element.scaleY || 1, 'easeOut'),
+        makeTrack('scaleX', scaleIn, element.scaleX || 1, 'easeOut', 1, false, { scaleFactor: scaleIn }),
+        makeTrack('scaleY', scaleIn, element.scaleY || 1, 'easeOut', 1, false, { scaleFactor: scaleIn }),
         makeTrack('opacity', 0, element.opacity || 1, 'easeOut'),
       ];
     case 'zoom-out':
       return [
-        makeTrack('scaleX', 1.35, element.scaleX || 1, 'easeOut'),
-        makeTrack('scaleY', 1.35, element.scaleY || 1, 'easeOut'),
+        makeTrack('scaleX', scaleOut, element.scaleX || 1, 'easeOut', 1, false, { scaleFactor: scaleOut }),
+        makeTrack('scaleY', scaleOut, element.scaleY || 1, 'easeOut', 1, false, { scaleFactor: scaleOut }),
       ];
-    case 'bounce':
-      return [makeTrack('y', element.y - 120, element.y, 'bounce')];
+    case 'bounce': {
+      const bDist = options.distancePx ?? 120;
+      return [makeTrack('y', element.y - bDist, element.y, 'bounce', 1, false, { distancePx: bDist })];
+    }
+    case 'drop-in': {
+      const dDist = options.distancePx ?? 240;
+      return [
+        makeTrack('y', element.y - dDist, element.y, 'bounce', 1, false, { distancePx: dDist }),
+        makeTrack('opacity', 0, element.opacity || 1, 'easeOut'),
+      ];
+    }
     case 'rotate':
-      return [makeTrack('rotation', element.rotation - 180, element.rotation, 'easeOut')];
+      return [
+        makeTrack('rotation', element.rotation - angle, element.rotation, 'easeOut', 1, false, {
+          rotationAngleDeg: angle,
+        }),
+      ];
+    case 'spin-cw': {
+      const cwAngle = options.rotationAngleDeg ?? 360;
+      return [
+        makeTrack(
+          'rotation',
+          element.rotation,
+          element.rotation + cwAngle,
+          options.easing ?? 'linear',
+          options.repeatCount ?? 1,
+          false,
+          { rotationAngleDeg: cwAngle }
+        ),
+      ];
+    }
+    case 'spin-ccw': {
+      const ccwAngle = options.rotationAngleDeg ?? -360;
+      const signedAngle = ccwAngle > 0 ? -ccwAngle : ccwAngle;
+      return [
+        makeTrack(
+          'rotation',
+          element.rotation,
+          element.rotation + signedAngle,
+          options.easing ?? 'linear',
+          options.repeatCount ?? 1,
+          false,
+          { rotationAngleDeg: signedAngle }
+        ),
+      ];
+    }
+    case 'swing': {
+      const swingAngle = options.rotationAngleDeg ?? 18;
+      return [
+        makeTrack(
+          'rotation',
+          element.rotation - swingAngle,
+          element.rotation + swingAngle,
+          'easeInOut',
+          options.repeatCount ?? -1,
+          true,
+          { rotationAngleDeg: swingAngle }
+        ),
+      ];
+    }
+    case 'spiral-in': {
+      const spAngle = options.rotationAngleDeg ?? 360;
+      return [
+        makeTrack('rotation', element.rotation - spAngle, element.rotation, 'easeOut', 1, false, {
+          rotationAngleDeg: spAngle,
+        }),
+        makeTrack('scaleX', 0.25, element.scaleX || 1, 'easeOut', 1, false, { scaleFactor: 0.25 }),
+        makeTrack('scaleY', 0.25, element.scaleY || 1, 'easeOut', 1, false, { scaleFactor: 0.25 }),
+        makeTrack('opacity', 0, element.opacity || 1, 'easeOut'),
+      ];
+    }
+    case 'pulse': {
+      const pScale = options.scaleFactor ?? 1.12;
+      return [
+        makeTrack('scaleX', element.scaleX || 1, pScale, 'easeInOut', options.repeatCount ?? -1, true, {
+          scaleFactor: pScale,
+        }),
+        makeTrack('scaleY', element.scaleY || 1, pScale, 'easeInOut', options.repeatCount ?? -1, true, {
+          scaleFactor: pScale,
+        }),
+      ];
+    }
+    case 'float': {
+      const fDist = options.distancePx ?? 24;
+      return [
+        makeTrack('y', element.y, element.y - fDist, 'easeInOut', options.repeatCount ?? -1, true, {
+          distancePx: fDist,
+        }),
+      ];
+    }
+    case 'shake': {
+      const sDist = options.distancePx ?? 16;
+      return [
+        makeTrack('x', element.x - sDist, element.x + sDist, 'elastic', options.repeatCount ?? 2, true, {
+          distancePx: sDist,
+        }),
+      ];
+    }
     case 'flip':
       return [makeTrack('scaleX', -1, element.scaleX || 1, 'easeInOut')];
+    case 'flip-y':
+      return [makeTrack('scaleY', -1, element.scaleY || 1, 'easeInOut')];
+    case 'skew-slide': {
+      const skAngle = options.rotationAngleDeg ?? 14;
+      const skDist = options.distancePx ?? 220;
+      return [
+        makeTrack('x', element.x - skDist, element.x, 'easeOut', 1, false, { distancePx: skDist }),
+        makeTrack('rotation', element.rotation - skAngle, element.rotation, 'easeOut', 1, false, {
+          rotationAngleDeg: skAngle,
+        }),
+      ];
+    }
+    case 'flash':
+      return [
+        makeTrack('opacity', 1, 0.15, 'easeInOut', options.repeatCount ?? 3, true),
+      ];
+    case 'rubber-band': {
+      const rbScale = options.scaleFactor ?? 1.25;
+      return [
+        makeTrack('scaleX', rbScale, element.scaleX || 1, 'elastic', 1, false, { scaleFactor: rbScale }),
+        makeTrack('scaleY', 0.78, element.scaleY || 1, 'elastic', 1, false, { scaleFactor: rbScale }),
+      ];
+    }
     case 'typewriter':
       return [makeTrack('textReveal', 0, 1, 'linear')];
     case 'wipe':
     case 'reveal':
       return [makeTrack('cropProgress', 0, 1, 'easeInOut')];
-    case 'ken-burns':
+    case 'ken-burns': {
+      const kbScale = options.scaleFactor ?? 1.14;
       return [
-        makeTrack('scaleX', 1, 1.14, 'easeInOut', -1, true),
-        makeTrack('scaleY', 1, 1.14, 'easeInOut', -1, true),
+        makeTrack('scaleX', 1, kbScale, 'easeInOut', -1, true, { scaleFactor: kbScale }),
+        makeTrack('scaleY', 1, kbScale, 'easeInOut', -1, true, { scaleFactor: kbScale }),
       ];
-    case 'pan-drift':
-      return [makeTrack('x', element.x - 25, element.x + 25, 'easeInOut', -1, true)];
-    case 'ticker':
-      return [makeTrack('x', element.x + 400, element.x - 400, 'linear', -1, false)];
+    }
+    case 'pan-drift': {
+      const pDist = options.distancePx ?? 25;
+      return [makeTrack('x', element.x - pDist, element.x + pDist, 'easeInOut', -1, true, { distancePx: pDist })];
+    }
+    case 'ticker': {
+      const tDist = options.distancePx ?? 400;
+      return [makeTrack('x', element.x + tDist, element.x - tDist, 'linear', -1, false, { distancePx: tDist })];
+    }
     default:
       return [];
   }

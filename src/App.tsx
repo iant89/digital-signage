@@ -27,6 +27,7 @@ import { StudioLeftSidebar } from '@/components/studio/StudioLeftSidebar';
 import { StudioCanvasWorkspace } from '@/components/studio/StudioCanvasWorkspace';
 import { StudioRightInspector } from '@/components/studio/StudioRightInspector';
 import { StudioBottomTimeline } from '@/components/studio/StudioBottomTimeline';
+import { StudioAudioEditorModal } from '@/components/studio/StudioAudioEditorModal';
 import { StandaloneSignagePlayer } from '@/components/player/StandaloneSignagePlayer';
 import { PackageManagerView } from '@/components/package-manager/PackageManagerView';
 import { NetworkManagementView } from '@/components/network/NetworkManagementView';
@@ -202,6 +203,7 @@ export const App: React.FC = () => {
               <StudioRightInspector />
             </div>
             <StudioBottomTimeline />
+            <StudioAudioEditorModal />
 
             {/* Mobile-Friendly Quick Drawer Switcher Bar */}
             {isMobileLayout && (

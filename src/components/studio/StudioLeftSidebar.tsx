@@ -3,11 +3,12 @@
 // Scene/Playlist Manager & Layer Hierarchy Tree
 // ============================================================================
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Type,
   Image as ImageIcon,
   Film,
+  Music,
   Square,
   Clock,
   QrCode,
@@ -30,6 +31,7 @@ import {
   CalendarClock,
   ChevronLeft,
   ChevronRight,
+  GripVertical,
 } from 'lucide-react';
 import { useStudioStore } from '@/store/useStudioStore';
 import {
@@ -45,6 +47,10 @@ type LeftTab = 'elements' | 'media' | 'scenes' | 'layers';
 export const StudioLeftSidebar: React.FC = () => {
   const [activeTab, setActiveTab] = useState<LeftTab>('elements');
   const [mediaSearch, setMediaSearch] = useState('');
+  const [resizingDrag, setResizingDrag] = useState<{
+    startX: number;
+    startWidth: number;
+  } | null>(null);
 
   const {
     project,
@@ -64,7 +70,33 @@ export const StudioLeftSidebar: React.FC = () => {
     leftSidebarCollapsed,
     setLeftSidebarCollapsed,
     toggleLeftSidebar,
+    leftSidebarWidth,
+    setLeftSidebarWidth,
+    setShowAudioEditorModal,
   } = useStudioStore();
+
+  useEffect(() => {
+    if (!resizingDrag) return;
+    const onMove = (e: PointerEvent | MouseEvent) => {
+      e.preventDefault();
+      const clientX = typeof e.clientX === 'number' ? e.clientX : resizingDrag.startX;
+      const delta = clientX - resizingDrag.startX;
+      setLeftSidebarWidth(resizingDrag.startWidth + delta);
+    };
+    const onUp = () => setResizingDrag(null);
+    window.addEventListener('pointermove', onMove, { passive: false });
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('mouseup', onUp);
+    window.addEventListener('pointercancel', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+    };
+  }, [resizingDrag, setLeftSidebarWidth]);
 
   const activeScene =
     project.scenes.find((s) => s.id === activeSceneId) ?? project.scenes[0];
@@ -153,10 +185,12 @@ export const StudioLeftSidebar: React.FC = () => {
   };
 
   const addWidgetPreset = (widgetKind: WidgetKind, label: string) => {
+    const isWide = widgetKind === 'ticker' || widgetKind === 'wayfinding' || widgetKind === 'alert';
+    const isSquare = widgetKind === 'qrcode';
     addElement('widget', {
       name: label,
-      width: widgetKind === 'ticker' ? 1200 : widgetKind === 'qrcode' ? 220 : 420,
-      height: widgetKind === 'ticker' ? 76 : widgetKind === 'qrcode' ? 220 : 220,
+      width: isWide ? (widgetKind === 'ticker' ? 1200 : 620) : isSquare ? 220 : 440,
+      height: widgetKind === 'ticker' ? 76 : isSquare ? 220 : 230,
       widgetProps: {
         widgetKind,
         timezone: 'UTC',
@@ -176,10 +210,50 @@ export const StudioLeftSidebar: React.FC = () => {
         weatherTempC: 21,
         weatherCondition: 'Sunny',
         dataFeedRows: [
-          { label: 'Item 01 • Main Stage', value: '10:00 AM', status: 'highlight' },
-          { label: 'Item 02 • Workshop B', value: '11:30 AM', status: 'normal' },
-          { label: 'Item 03 • Networking', value: '02:00 PM', status: 'normal' },
+          { label: '08:00 • Main Stage', value: '45', status: 'highlight' },
+          { label: '10:00 • Workshop B', value: '78', status: 'normal' },
+          { label: '12:00 • Networking', value: '94', status: 'normal' },
+          { label: '14:00 • Expo Hall', value: '66', status: 'normal' },
         ],
+        kpiTitle: 'LIVE CAMPUS VISITORS',
+        kpiValue: '14,820',
+        kpiUnit: 'active guests',
+        kpiDelta: '+18.4%',
+        kpiTrend: 'up',
+        kpiSparklinePoints: [28, 42, 36, 58, 52, 76, 94],
+        chartType: 'bar',
+        chartTitle: 'HOURLY CAMPUS ENERGY LOAD (MW)',
+        chartShowValues: true,
+        wayfindingDirection: 'up-right',
+        wayfindingDestination: 'GRAND KEYNOTE AUDITORIUM',
+        wayfindingSubtext: 'Level 3 • East Concourse',
+        wayfindingDistance: '120m (2 min)',
+        wayfindingStatus: 'DOORS OPEN',
+        queueTitle: 'NOW SERVING',
+        queueCurrentTicket: 'A-204',
+        queueCounterLabel: 'DESK 03',
+        queueWaitingTickets: ['A-205', 'A-206', 'B-104', 'C-019'],
+        progressStyle: 'radial',
+        progressTitle: 'PARKING GARAGE CAPACITY',
+        progressValue: 76,
+        progressMax: 100,
+        progressUnit: '%',
+        progressSubtitle: '240 EV & standard spaces available on Level P2',
+        socialAuthor: 'Apex Innovation Summit',
+        socialHandle: '@ApexGlobalHQ',
+        socialPostText:
+          'Welcome to the 2026 Digital Signage & Spatial Display Keynote! Tag #Apex2026 to appear on the atrium wall.',
+        socialPlatform: 'announcement',
+        socialTimestamp: 'Just now',
+        socialLikes: '1.4K',
+        calendarRoomName: 'BOARDROOM 4B — SKYLINE SUITE',
+        calendarRoomStatus: 'available',
+        calendarCurrentEvent: 'Q4 Product Architecture Review',
+        calendarOrganizer: '10:00 AM – 11:30 AM • Hosted by Executive Engineering',
+        alertSeverity: 'warning',
+        alertTitle: 'FACILITY & TRANSIT NOTICE',
+        alertMessage: 'North Shuttle Boarding moved to Covered Concourse B due to high winds.',
+        alertZone: 'ALL CAMPUS ZONES',
         accentColor: '#38bdf8',
       },
     });
@@ -188,101 +262,118 @@ export const StudioLeftSidebar: React.FC = () => {
   if (leftSidebarCollapsed) {
     return (
       <aside className="studio-left-sidebar collapsed" aria-label="Collapsed Left Sidebar">
-        <button
-          className="collapsed-rail-btn"
-          onClick={() => setLeftSidebarCollapsed(false)}
-          title="Expand Left Sidebar"
-          aria-label="Expand Left Sidebar"
+        <div
+          className="panel-inside-edge-bar left-panel-edge collapsed-edge"
+          title="Click chevron to expand Left Sidebar"
         >
-          <ChevronRight size={15} />
-        </button>
-        <button
-          className={`collapsed-rail-btn ${activeTab === 'elements' ? 'active' : ''}`}
-          onClick={() => {
-            setActiveTab('elements');
-            setLeftSidebarCollapsed(false);
-          }}
-          title="Elements & Widgets Palette"
-        >
-          <Sparkles size={15} />
-        </button>
-        <button
-          className={`collapsed-rail-btn ${activeTab === 'media' ? 'active' : ''}`}
-          onClick={() => {
-            setActiveTab('media');
-            setLeftSidebarCollapsed(false);
-          }}
-          title={`Media Library (${project.assets.length})`}
-        >
-          <FolderOpen size={15} />
-        </button>
-        <button
-          className={`collapsed-rail-btn ${activeTab === 'scenes' ? 'active' : ''}`}
-          onClick={() => {
-            setActiveTab('scenes');
-            setLeftSidebarCollapsed(false);
-          }}
-          title={`Scenes & Playlists (${project.scenes.length})`}
-        >
-          <CalendarClock size={15} />
-        </button>
-        <button
-          className={`collapsed-rail-btn ${activeTab === 'layers' ? 'active' : ''}`}
-          onClick={() => {
-            setActiveTab('layers');
-            setLeftSidebarCollapsed(false);
-          }}
-          title={`Scene Layers (${activeScene?.elements.length ?? 0})`}
-        >
-          <Layers size={15} />
-        </button>
+          <button
+            className="inside-edge-chevron-btn"
+            onClick={() => setLeftSidebarCollapsed(false)}
+            title="Expand Left Sidebar"
+            aria-label="Expand Left Sidebar"
+          >
+            <ChevronRight size={15} />
+          </button>
+          <span
+            className="inside-edge-vertical-title"
+            onClick={() => setLeftSidebarCollapsed(false)}
+          >
+            PALETTE &amp; ASSETS
+          </span>
+          <button
+            className={`collapsed-rail-btn ${activeTab === 'elements' ? 'active' : ''}`}
+            onClick={() => {
+              setActiveTab('elements');
+              setLeftSidebarCollapsed(false);
+            }}
+            title="Elements & Widgets Palette"
+          >
+            <Sparkles size={14} />
+          </button>
+          <button
+            className={`collapsed-rail-btn ${activeTab === 'media' ? 'active' : ''}`}
+            onClick={() => {
+              setActiveTab('media');
+              setLeftSidebarCollapsed(false);
+            }}
+            title={`Media Library (${project.assets.length})`}
+          >
+            <FolderOpen size={14} />
+          </button>
+          <button
+            className={`collapsed-rail-btn ${activeTab === 'scenes' ? 'active' : ''}`}
+            onClick={() => {
+              setActiveTab('scenes');
+              setLeftSidebarCollapsed(false);
+            }}
+            title={`Scenes & Playlists (${project.scenes.length})`}
+          >
+            <CalendarClock size={14} />
+          </button>
+          <button
+            className={`collapsed-rail-btn ${activeTab === 'layers' ? 'active' : ''}`}
+            onClick={() => {
+              setActiveTab('layers');
+              setLeftSidebarCollapsed(false);
+            }}
+            title={`Scene Layers (${activeScene?.elements.length ?? 0})`}
+          >
+            <Layers size={14} />
+          </button>
+        </div>
       </aside>
     );
   }
 
   return (
-    <aside className="studio-left-sidebar">
-      <div className="sidebar-tabs">
-        <button
-          className={`sidebar-tab ${activeTab === 'elements' ? 'active' : ''}`}
-          onClick={() => setActiveTab('elements')}
-        >
-          <Sparkles size={14} /> Elements
-        </button>
-        <button
-          className={`sidebar-tab ${activeTab === 'media' ? 'active' : ''}`}
-          onClick={() => setActiveTab('media')}
-        >
-          <FolderOpen size={14} /> Media ({project.assets.length})
-        </button>
-        <button
-          className={`sidebar-tab ${activeTab === 'scenes' ? 'active' : ''}`}
-          onClick={() => setActiveTab('scenes')}
-        >
-          <CalendarClock size={14} /> Scenes ({project.scenes.length})
-        </button>
-        <button
-          className={`sidebar-tab ${activeTab === 'layers' ? 'active' : ''}`}
-          onClick={() => setActiveTab('layers')}
-        >
-          <Layers size={14} /> Layers ({activeScene?.elements.length ?? 0})
-        </button>
-        <button
-          className="sidebar-collapse-btn"
-          onClick={toggleLeftSidebar}
-          title="Collapse Left Sidebar"
-          aria-label="Collapse Left Sidebar"
-        >
-          <ChevronLeft size={14} />
-        </button>
-      </div>
+    <aside
+      className="studio-left-sidebar has-inside-edge-bar"
+      style={{ width: `${leftSidebarWidth}px` }}
+    >
+      <div className="sidebar-main-column">
+        <div className="sidebar-tabs">
+          <button
+            className={`sidebar-tab ${activeTab === 'elements' ? 'active' : ''}`}
+            onClick={() => setActiveTab('elements')}
+          >
+            <Sparkles size={14} /> Elements
+          </button>
+          <button
+            className={`sidebar-tab ${activeTab === 'media' ? 'active' : ''}`}
+            onClick={() => setActiveTab('media')}
+          >
+            <FolderOpen size={14} /> Media ({project.assets.length})
+          </button>
+          <button
+            className={`sidebar-tab ${activeTab === 'scenes' ? 'active' : ''}`}
+            onClick={() => setActiveTab('scenes')}
+          >
+            <CalendarClock size={14} /> Scenes ({project.scenes.length})
+          </button>
+          <button
+            className={`sidebar-tab ${activeTab === 'layers' ? 'active' : ''}`}
+            onClick={() => setActiveTab('layers')}
+          >
+            <Layers size={14} /> Layers ({activeScene?.elements.length ?? 0})
+          </button>
+        </div>
 
-      <div className="sidebar-body">
-        {/* TAB 1: ELEMENTS & WIDGETS */}
-        {activeTab === 'elements' && (
-          <div className="palette-container">
-            <div className="palette-section">
-              <div className="palette-title">Typography & Text</div>
+        <div className="sidebar-body">
+          {/* TAB 1: ELEMENTS & WIDGETS */}
+          {activeTab === 'elements' && (
+            <div className="palette-container">
+              <div className="palette-section">
+                <div className="palette-title">Background Music &amp; Scene Audio</div>
+                <button
+                  className="btn-primary full-width"
+                  onClick={() => setShowAudioEditorModal(true)}
+                >
+                  <Music size={14} /> Open Audio Editor &amp; Music Mixer (
+                  {project.audioTracks?.length ?? 0})
+                </button>
+              </div>
+              <div className="palette-section">
+                <div className="palette-title">Typography & Text</div>
               <div className="palette-grid">
                 <button
                   className="palette-btn"
@@ -435,6 +526,54 @@ export const StudioLeftSidebar: React.FC = () => {
                   onClick={() => addWidgetPreset('weather', 'Local Weather Card')}
                 >
                   <CloudSun size={16} /> Weather
+                </button>
+                <button
+                  className="palette-btn"
+                  onClick={() => addWidgetPreset('kpi', 'KPI Metric & Sparkline')}
+                >
+                  <Sparkles size={16} /> KPI Metric
+                </button>
+                <button
+                  className="palette-btn"
+                  onClick={() => addWidgetPreset('chart', 'Telemetry Bar Chart')}
+                >
+                  <Layers size={16} /> Bar / H-Chart
+                </button>
+                <button
+                  className="palette-btn"
+                  onClick={() => addWidgetPreset('wayfinding', 'Directional Wayfinding')}
+                >
+                  <ArrowUp size={16} /> Wayfinding
+                </button>
+                <button
+                  className="palette-btn"
+                  onClick={() => addWidgetPreset('queue', 'Now Serving Queue')}
+                >
+                  <ListFilter size={16} /> Queue Ticket
+                </button>
+                <button
+                  className="palette-btn"
+                  onClick={() => addWidgetPreset('progress', 'Capacity Gauge Meter')}
+                >
+                  <Clock size={16} /> Gauge Meter
+                </button>
+                <button
+                  className="palette-btn"
+                  onClick={() => addWidgetPreset('social', 'Social Wall Post')}
+                >
+                  <Type size={16} /> Social Card
+                </button>
+                <button
+                  className="palette-btn"
+                  onClick={() => addWidgetPreset('calendar', 'Room Booking Schedule')}
+                >
+                  <CalendarClock size={16} /> Room Schedule
+                </button>
+                <button
+                  className="palette-btn"
+                  onClick={() => addWidgetPreset('alert', 'Emergency Advisory Alert')}
+                >
+                  <Lock size={16} /> Safety Alert
                 </button>
               </div>
             </div>
@@ -709,6 +848,45 @@ export const StudioLeftSidebar: React.FC = () => {
             </div>
           </div>
         )}
+        </div>
+      </div>
+
+      {/* Inside-Edge Vertical Title Bar & Drag-to-Resize Handle (Right Edge of Left Sidebar) */}
+      <div
+        className="panel-inside-edge-bar left-panel-edge"
+        title="Drag horizontally to resize Left Panel, or click chevron to collapse"
+        aria-label="Resize Left Sidebar"
+        onPointerDown={(e) => {
+          if ((e.target as HTMLElement).closest('button')) return;
+          e.preventDefault();
+          e.stopPropagation();
+          setResizingDrag({
+            startX: typeof e.clientX === 'number' ? e.clientX : leftSidebarWidth,
+            startWidth: leftSidebarWidth,
+          });
+        }}
+        onMouseDown={(e) => {
+          if ((e.target as HTMLElement).closest('button')) return;
+          e.preventDefault();
+          e.stopPropagation();
+          setResizingDrag({
+            startX: typeof e.clientX === 'number' ? e.clientX : leftSidebarWidth,
+            startWidth: leftSidebarWidth,
+          });
+        }}
+      >
+        <button
+          className="inside-edge-chevron-btn"
+          onClick={toggleLeftSidebar}
+          title="Collapse Left Sidebar"
+          aria-label="Collapse Left Sidebar"
+        >
+          <ChevronLeft size={14} />
+        </button>
+        <span className="inside-edge-vertical-title">
+          PALETTE &amp; ASSETS — {activeTab.toUpperCase()}
+        </span>
+        <GripVertical size={13} className="inside-edge-grip-icon" />
       </div>
     </aside>
   );

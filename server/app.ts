@@ -16,6 +16,7 @@ import {
   evaluateDriftCorrection,
 } from '@packages/playback-engine';
 import {
+  buildSignageDeltaPatch,
   buildSignagePackage,
   extractProjectFromArchive,
   validateSignageArchive,
@@ -737,6 +738,37 @@ export async function buildServerApp(
       contentHash: pkg.content_hash,
       sizeBytes: pkg.size_bytes,
       archiveBase64: Buffer.from(bytes).toString('base64'),
+    };
+  });
+
+  app.post('/api/v1/packages/delta', async (req, reply) => {
+    const body = (req.body as { basePackageId?: string; targetPackageId?: string }) || {};
+    if (!body.basePackageId || !body.targetPackageId) {
+      return reply.code(400).send({ error: 'Both basePackageId and targetPackageId are required' });
+    }
+
+    const basePkg = store.db
+      .prepare('SELECT * FROM packages WHERE id = ?')
+      .get(body.basePackageId) as { id: string; content_hash: string } | undefined;
+    const targetPkg = store.db
+      .prepare('SELECT * FROM packages WHERE id = ?')
+      .get(body.targetPackageId) as { id: string; content_hash: string } | undefined;
+
+    if (!basePkg || !targetPkg) {
+      return reply.code(404).send({ error: 'Base or target package not found' });
+    }
+
+    const baseBytes = store.readPackageBytes(basePkg.content_hash);
+    const targetBytes = store.readPackageBytes(targetPkg.content_hash);
+    if (!baseBytes || !targetBytes) {
+      return reply.code(404).send({ error: 'Package binary blob missing from storage' });
+    }
+
+    const deltaPatch = buildSignageDeltaPatch(baseBytes, targetBytes);
+    return {
+      basePackageId: basePkg.id,
+      targetPackageId: targetPkg.id,
+      deltaPatch,
     };
   });
 

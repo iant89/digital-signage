@@ -22,7 +22,7 @@ This document tracks the end-to-end engineering roadmap for **Digital Signage St
 | **11** | Synchronized Playback & Drift Control | **COMPLETED** | `packages/playback-engine/` (`evaluateAuthoritativeTimeline`, `ClockSyncEngine`, `evaluateDriftCorrection`), `server/app.ts` (`/api/v1/sessions`, `/api/v1/clock/sync`) | `tests/integration/essential-e2e-and-sync.test.ts` (Tests 1–3, 8, 10) |
 | **12** | Network Management UI & Video Wall Simulator | **COMPLETED** | `src/components/network/NetworkManagementView.tsx` | `tests/browser/studio-ui.test.tsx` |
 | **13** | Reliability, Persistence & Security Hardening | **COMPLETED** | `server/db.ts`, `server/app.ts` (`/api/v1/commands`, `/api/v1/audit-log`) | `tests/integration/essential-e2e-and-sync.test.ts` (Tests 4, 5, 7, 9, 10) |
-| **14** | Future Optional Enhancements | **PLANNED** | Delta binary patch streaming, WebRTC/genlock hardware wall adapter, PostgreSQL/S3 cloud adapters | Future expansion |
+| **14** | Enterprise Extensions (Delta Patch, Desktop Installers, S3/Postgres Adapters) | **COMPLETED** | `packages/signage-format/`, `apps/desktop-host/`, `server/adapters/storage-adapter.ts` | `tests/unit/enterprise-phase14.test.ts` |
 
 ---
 
@@ -122,7 +122,9 @@ This document tracks the end-to-end engineering roadmap for **Digital Signage St
 
 ---
 
-## Phase 14: Optional Future Enterprise Extensions — [PLANNED]
-- [ ] **Binary Delta Patch Transport (Spec 27.5)**: Extend `/api/v1/packages` with entry-level delta diff streams between base and target package hashes to reduce WAN bandwidth for multi-gigabyte video packages.
-- [ ] **Native Desktop Host Packaging**: Add Electron Builder / Tauri bundler configuration to output native `.deb` / `.AppImage` (Linux) and `.msi` (Windows) installers from `apps/desktop-host/`.
-- [ ] **PostgreSQL & S3 Storage Adapters**: Add optional connection adapters alongside the built-in SQLite + filesystem content-addressed store for multi-node cloud clusters.
+## Phase 14: Optional Future Enterprise Extensions — [COMPLETED]
+- [x] **Binary Delta Patch Transport (Spec 27.5)**: Implemented `buildSignageDeltaPatch` and `applySignageDeltaPatch` in `packages/signage-format/index.ts`, added `POST /api/v1/packages/delta` in `server/app.ts`, and integrated WAN delta bandwidth savings + bit-identical SHA-256 verification into `PackageManagerView.tsx`.
+- [x] **Native Desktop Host Packaging**: Added CLI flag parser (`parseKioskCliArgs`), multi-display bounds resolver (`resolveTargetDisplayBounds`), strict kiosk CSP generator (`buildKioskCspHeader`), `apps/desktop-host/electron-builder.yml` (`.deb`, `.AppImage`, `.msi`, `.dmg`), `apps/desktop-host/tauri.conf.json`, and Windows 11 Enterprise provisioning script (`apps/desktop-host/windows-kiosk-provision.ps1`).
+- [x] **PostgreSQL & S3 Storage Adapters**: Implemented `FilesystemBlobStorageAdapter`, `S3CompatibleBlobStorageAdapter` (with SigV4 presigned URL generation), and `PostgresClusterAdapter` (with `?` → `$1` SQL parameter translation and multi-node session leader advisory locks) in `server/adapters/storage-adapter.ts`.
+- [x] **Collapsible Editor Side Panels & Mobile-Friendly Layout**: Added collapsible Left Sidebar, Right Inspector, and Bottom Timeline docks (both via header/rail controls and top toolbar toggles), responsive mobile phone detection (`<= 768px` or manual **Mobile View** toggle), slide-over mobile studio drawers, and a bottom mobile drawer switcher bar (`Canvas`, `Add / Scenes`, `Inspector`, `Timeline`).
+- [x] **Mobile Player Setup QR Code Provisioning**: Added a **Setup QR Code** modal on the Signage Player (`StandaloneSignagePlayer.tsx`) encoding a `signage://enroll?...` provisioning payload (`src/utils/enrollmentQr.ts`) into a 21×21 QR matrix, and added a **Scan Player Setup QR Code** camera/viewfinder modal in Network Management → Devices & Enrollment (`NetworkManagementView.tsx`).

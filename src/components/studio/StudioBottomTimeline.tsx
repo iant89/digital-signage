@@ -15,6 +15,8 @@ import {
   VolumeX,
   CheckCircle2,
   AlertTriangle,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { useStudioStore } from '@/store/useStudioStore';
 import { analyzeProjectAssets, validateProject } from '@packages/project-model';
@@ -35,6 +37,8 @@ export const StudioBottomTimeline: React.FC = () => {
     toggleTrackMute,
     toggleTrackLock,
     saveStatus,
+    bottomTimelineCollapsed,
+    toggleBottomTimeline,
   } = useStudioStore();
 
   const activeScene =
@@ -71,7 +75,7 @@ export const StudioBottomTimeline: React.FC = () => {
   const totalFrames = Math.floor((sceneDurationMs / 1000) * fps);
 
   return (
-    <div className="studio-bottom-dock">
+    <div className={`studio-bottom-dock ${bottomTimelineCollapsed ? 'collapsed' : ''}`}>
       {/* Timeline Controls Header */}
       <div className="timeline-header">
         <div className="timeline-transport">
@@ -135,10 +139,21 @@ export const StudioBottomTimeline: React.FC = () => {
             className="timeline-range-input"
           />
         </div>
+
+        <button
+          className="btn-xs"
+          onClick={toggleBottomTimeline}
+          title={bottomTimelineCollapsed ? 'Expand Timeline Tracks' : 'Collapse Timeline Tracks'}
+          aria-label="Collapse or Expand Timeline"
+        >
+          {bottomTimelineCollapsed ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+          {bottomTimelineCollapsed ? 'Expand Timeline' : 'Collapse'}
+        </button>
       </div>
 
       {/* Multi-Track Keyframe Lanes */}
-      <div className="timeline-tracks-body">
+      {!bottomTimelineCollapsed && (
+        <div className="timeline-tracks-body">
         {activeScene &&
           activeScene.animationTracks.map((track) => {
             const el = activeScene.elements.find((e) => e.id === track.elementId);
@@ -251,7 +266,8 @@ export const StudioBottomTimeline: React.FC = () => {
             />
           </div>
         </div>
-      </div>
+        </div>
+      )}
 
       {/* Studio Status Bar (Spec Section 4.1) */}
       <footer className="studio-status-bar">

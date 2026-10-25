@@ -14,6 +14,12 @@ import {
   Sun,
   Moon,
   X,
+  Smartphone,
+  Monitor,
+  Sparkles,
+  Sliders,
+  Clock,
+  Layout,
 } from 'lucide-react';
 import { useStudioStore } from '@/store/useStudioStore';
 import { StudioTopToolbar } from '@/components/studio/StudioTopToolbar';
@@ -41,11 +47,31 @@ export const App: React.FC = () => {
     duplicateSelectedElements,
     notification,
     clearNotification,
+    isMobileLayout,
+    setIsMobileLayout,
+    leftSidebarCollapsed,
+    setLeftSidebarCollapsed,
+    rightInspectorCollapsed,
+    setRightInspectorCollapsed,
+    bottomTimelineCollapsed,
+    setBottomTimelineCollapsed,
   } = useStudioStore();
 
   useEffect(() => {
     void hydrateFromPersistence();
   }, [hydrateFromPersistence]);
+
+  // Responsive viewport listener for mobile phones (<= 768px)
+  useEffect(() => {
+    const checkViewport = () => {
+      const mobile = window.innerWidth <= 768;
+      if (mobile !== useStudioStore.getState().isMobileLayout) {
+        setIsMobileLayout(mobile);
+      }
+    };
+    window.addEventListener('resize', checkViewport);
+    return () => window.removeEventListener('resize', checkViewport);
+  }, [setIsMobileLayout]);
 
   // Global keyboard shortcuts (Spec Section 14 & 17)
   useEffect(() => {
@@ -93,7 +119,7 @@ export const App: React.FC = () => {
   ]);
 
   return (
-    <div className={`app-root theme-${themeMode}`}>
+    <div className={`app-root theme-${themeMode} ${isMobileLayout ? 'mobile-layout' : ''}`}>
       {/* Primary Mode Navigation Header */}
       <header className="app-global-nav">
         <div className="brand-title">
@@ -137,6 +163,15 @@ export const App: React.FC = () => {
 
         <div className="global-nav-right">
           <button
+            className={`btn-xs ${isMobileLayout ? 'active' : ''}`}
+            onClick={() => setIsMobileLayout(!isMobileLayout)}
+            title="Toggle Mobile Phone Layout / Desktop Layout"
+            aria-label="Toggle Mobile Layout"
+          >
+            {isMobileLayout ? <Smartphone size={14} /> : <Monitor size={14} />}
+            <span>{isMobileLayout ? 'Mobile View' : 'Desktop View'}</span>
+          </button>
+          <button
             className="icon-btn"
             onClick={() => setThemeMode(themeMode === 'dark' ? 'light' : 'dark')}
             title={`Switch to ${themeMode === 'dark' ? 'Light' : 'Dark'} Theme`}
@@ -167,6 +202,45 @@ export const App: React.FC = () => {
               <StudioRightInspector />
             </div>
             <StudioBottomTimeline />
+
+            {/* Mobile-Friendly Quick Drawer Switcher Bar */}
+            {isMobileLayout && (
+              <nav className="mobile-studio-drawer-bar" aria-label="Mobile Studio Panels">
+                <button
+                  className={`mobile-drawer-tab ${
+                    leftSidebarCollapsed && rightInspectorCollapsed ? 'active' : ''
+                  }`}
+                  onClick={() => {
+                    setLeftSidebarCollapsed(true);
+                    setRightInspectorCollapsed(true);
+                  }}
+                >
+                  <Layout size={15} />
+                  <span>Canvas</span>
+                </button>
+                <button
+                  className={`mobile-drawer-tab ${!leftSidebarCollapsed ? 'active' : ''}`}
+                  onClick={() => setLeftSidebarCollapsed(!leftSidebarCollapsed)}
+                >
+                  <Sparkles size={15} />
+                  <span>Add / Scenes</span>
+                </button>
+                <button
+                  className={`mobile-drawer-tab ${!rightInspectorCollapsed ? 'active' : ''}`}
+                  onClick={() => setRightInspectorCollapsed(!rightInspectorCollapsed)}
+                >
+                  <Sliders size={15} />
+                  <span>Inspector</span>
+                </button>
+                <button
+                  className={`mobile-drawer-tab ${!bottomTimelineCollapsed ? 'active' : ''}`}
+                  onClick={() => setBottomTimelineCollapsed(!bottomTimelineCollapsed)}
+                >
+                  <Clock size={15} />
+                  <span>Timeline</span>
+                </button>
+              </nav>
+            )}
           </div>
         )}
 

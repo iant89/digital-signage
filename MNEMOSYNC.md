@@ -6,9 +6,9 @@
 
 ## Current Project Snapshot
 
-- **Active Branch**: `arena/0c3849d9-digital-signage`
+- **Active Branch**: `arena/a7831280-digital-signage`
 - **Build Status**: Passing (`npm run build` — zero TypeScript or Vite bundle errors)
-- **Test Status**: Passing (`npm test` — 4 test files, 17 comprehensive test suites covering unit, archive fuzzing, UI integration, 19-step E2E workflow, and all 10 network synchronization acceptance tests)
+- **Test Status**: Passing (`npm test` — 5 test files, 21 comprehensive test suites covering unit, archive fuzzing, UI integration, 19-step E2E workflow, all 10 network synchronization acceptance tests, and Phase 14 enterprise extensions)
 - **Running Services**:
   - **Backend API & WebSocket Server**: Port `4000` (`npm run dev:server` via `tsx server/index.ts`, bound to `0.0.0.0:4000`)
   - **Frontend Vite Studio & Management App**: Port `5173` (`npm run dev`, bound to `0.0.0.0:5173`, proxying `/api` and `/ws` to `127.0.0.1:4000`)
@@ -55,9 +55,36 @@
 ### [2026-10-25 — Session 03] GitHub Pages Setup & Static Server Fallback
 
 - Added `.github/workflows/deploy-pages.yml` using `actions/configure-pages@v5`, `actions/upload-pages-artifact@v3`, and `actions/deploy-pages@v4` to run tests, build the static site, and deploy `./dist` to GitHub Pages.
+- Added `if: github.ref == 'refs/heads/main'` to the `deploy` job and Pages artifact steps so feature branches (`arena/**`) run the full `build` + `npm test` CI checks and pass cleanly without triggering GitHub's `github-pages` environment branch protection rule (`Branch "arena/..." is not allowed to deploy to github-pages due to environment protection rules`).
 - Updated `vite.config.ts` with `base: './'` so asset paths resolve properly on GitHub Pages project subpaths (`/<repo>/`).
 - Added `public/.nojekyll` and updated `package.json` (`build` & `build:pages`) to generate `dist/404.html` for SPA routing on GitHub Pages.
 - Created `src/services/staticServerSimulator.ts` and registered `installStaticServerFallback()` in `src/main.tsx`. When deployed to a static host like GitHub Pages where `/api/v1/*` returns HTML 404/network error, the browser seamlessly falls back to an in-memory virtual server with all 6 synchronized displays, groups, packages, sessions, NTP clock sync, enrollment codes, commands, and audit log.
+
+### [2026-10-25 — Session 04] Phase 14 Enterprise Extensions Implemented
+
+- **14.1 Binary Delta Patch Transport (`packages/signage-format/index.ts`, `server/app.ts`, `src/components/package-manager/PackageManagerView.tsx`)**:
+  - Implemented `buildSignageDeltaPatch(baseBytes, targetBytes)` and `applySignageDeltaPatch(baseBytes, deltaPatch)` with entry-level content-hash deduplication and bit-for-bit target `.signage` reconstruction.
+  - Added `POST /api/v1/packages/delta` endpoint and UI WAN bandwidth analyzer in Package Manager.
+- **14.2 Native Desktop Host Packaging (`apps/desktop-host/`)**:
+  - Added `parseKioskCliArgs`, `resolveTargetDisplayBounds`, and `buildKioskCspHeader` to `apps/desktop-host/kiosk-host.ts`.
+  - Created `electron-builder.yml`, `tauri.conf.json`, and `windows-kiosk-provision.ps1`.
+- **14.3 Cloud Storage & PostgreSQL Cluster Adapters (`server/adapters/storage-adapter.ts`)**:
+  - Implemented `FilesystemBlobStorageAdapter`, `S3CompatibleBlobStorageAdapter`, and `PostgresClusterAdapter`.
+- Added automated test suite `tests/unit/enterprise-phase14.test.ts` (all 5 test files / 21 tests passing).
+
+### [2026-10-25 — Session 05] Collapsible Studio Panels, Mobile-Friendly Layout & Mobile QR Enrollment
+
+- **Collapsible Studio Panels (`useStudioStore.ts`, `StudioTopToolbar.tsx`, `StudioLeftSidebar.tsx`, `StudioRightInspector.tsx`, `StudioBottomTimeline.tsx`)**:
+  - Added `leftSidebarCollapsed`, `rightInspectorCollapsed`, and `bottomTimelineCollapsed` state and toggle actions.
+  - When collapsed on desktop, Left Sidebar and Right Inspector render 42px vertical icon rails (`collapsed-rail-btn`) so users can jump directly to any tab (`Elements`, `Media`, `Scenes`, `Layers` or `Properties`, `Motion`, `Scripts`).
+  - Added `PanelLeft`, `PanelBottom`, and `PanelRight` toggle buttons to `StudioTopToolbar.tsx`.
+- **Mobile Phone Responsive Layout (`App.tsx`, `src/styles.css`)**:
+  - Added automatic mobile detection (`window.innerWidth <= 768` or mobile user-agent) plus a header **Mobile View / Desktop View** toggle button.
+  - Added a touch-friendly bottom drawer switcher bar (`Canvas`, `Add / Scenes`, `Inspector`, `Timeline`) in Studio mode when on mobile, with mutually exclusive slide-over drawers so the canvas is never crushed on phone screens.
+- **Player Setup QR Code & Mobile Enrollment Scanner (`src/utils/enrollmentQr.ts`, `StandaloneSignagePlayer.tsx`, `NetworkManagementView.tsx`)**:
+  - Created `src/utils/enrollmentQr.ts` with `encodePlayerSetupQrPayload`, `decodePlayerSetupQrPayload`, and 21×21 Version-1 QR matrix generator `buildEnrollmentQrMatrix`.
+  - Added **Setup QR Code** modal on the Signage Player (`StandaloneSignagePlayer.tsx`) that displays the player's `signage://enroll?...` QR code upon setup.
+  - Added **Scan Player Setup QR Code** modal in `NetworkManagementView.tsx` (Devices & Enrollment tab) supporting live rear camera (`getUserMedia({ video: { facingMode: 'environment' } })` + `BarcodeDetector`), photo capture (`capture="environment"`), one-tap scan of the active Player Setup QR code, and manual URI decoding.
 
 ---
 

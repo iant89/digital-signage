@@ -1,0 +1,45 @@
+# ============================================================================
+# apps/desktop-host/electron-builder.yml
+# Cross-Platform Native Kiosk Installer Configuration (.deb, .AppImage, .msi, .dmg)
+# ============================================================================
+
+appId: com.apexsignage.kioskplayer
+productName: Digital Signage Kiosk Player
+copyright: Copyright © 2026 Digital Signage Studio
+directories:
+  output: release
+  buildResources: build-resources
+
+files:
+  - dist/**/*
+  - apps/desktop-host/**/*
+  - package.json
+
+fileAssociations:
+  - ext: signage
+    name: Digital Signage Archive Package
+    description: Compressed Digital Signage Presentation Package (.signage)
+    mimeType: application/vnd.digital-signage.package
+    role: Viewer
+
+linux:
+  category: Video
+  executableName: signage-kiosk-player
+  target:
+    - target: deb
+      arch: [x64, arm64]
+    - target: AppImage
+      arch: [x64, arm64]
+
+win:
+  target:
+    - target: msi
+      arch: [x64]
+    - target: nsis
+      arch: [x64]
+
+mac:
+  category: public.app-category.video
+  target:
+    - target: dmg
+      arch: [x64, arm64]

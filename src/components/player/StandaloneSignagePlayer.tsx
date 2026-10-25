@@ -20,8 +20,16 @@ import {
   RefreshCw,
   Upload,
   ArrowLeft,
+  QrCode,
+  Smartphone,
 } from 'lucide-react';
 import { useStudioStore } from '@/store/useStudioStore';
+import {
+  PlayerSetupQrPayload,
+  buildEnrollmentQrMatrix,
+  encodePlayerSetupQrPayload,
+  saveActivePlayerSetupQr,
+} from '@/utils/enrollmentQr';
 import {
   SynchronizedSessionConfig,
   evaluateAuthoritativeTimeline,
@@ -58,6 +66,30 @@ export const StandaloneSignagePlayer: React.FC = () => {
   const [watchdogState, setWatchdogState] = useState(() => watchdogSupervisor.getStatus());
   const [estimatedFps, setEstimatedFps] = useState(60);
   const [cornerTapCount, setCornerTapCount] = useState(0);
+  const [showSetupQrModal, setShowSetupQrModal] = useState(false);
+
+  const setupQrPayload = useMemo<PlayerSetupQrPayload>(() => {
+    const payload: PlayerSetupQrPayload = {
+      enrollmentCode: 'ENROLL-APEX-2026',
+      deviceId: kioskConfig.deviceId || 'player-kiosk-07',
+      deviceName: kioskConfig.deviceName || 'Lobby Reserve Kiosk #07',
+      location: 'Global HQ Atrium',
+      assignedDisplay: 'HDMI-1 (1920x1080)',
+      os: 'Linux Kiosk 6.8',
+      generatedAtIso: new Date().toISOString(),
+    };
+    saveActivePlayerSetupQr(payload);
+    return payload;
+  }, [kioskConfig.deviceId, kioskConfig.deviceName]);
+
+  const setupQrUri = useMemo(
+    () => encodePlayerSetupQrPayload(setupQrPayload),
+    [setupQrPayload]
+  );
+  const setupQrMatrix = useMemo(
+    () => buildEnrollmentQrMatrix(setupQrUri),
+    [setupQrUri]
+  );
 
   const playerContainerRef = useRef<HTMLDivElement | null>(null);
   const sessionStartRef = useRef<number>(Date.now());
@@ -361,6 +393,17 @@ export const StandaloneSignagePlayer: React.FC = () => {
             </button>
 
             <button
+              className="btn-xs primary-accent"
+              onClick={() => {
+                saveActivePlayerSetupQr(setupQrPayload);
+                setShowSetupQrModal(true);
+              }}
+              title="Show Player Setup & Mobile Enrollment QR Code"
+            >
+              <QrCode size={13} /> Setup QR Code
+            </button>
+
+            <button
               className="btn-xs"
               onClick={() => {
                 adminController.exitMaintenanceSession();
@@ -493,6 +536,100 @@ export const StandaloneSignagePlayer: React.FC = () => {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Player Setup & Mobile Enrollment QR Code Modal */}
+      {showSetupQrModal && (
+        <div className="inline-edit-backdrop" onClick={() => setShowSetupQrModal(false)}>
+          <div
+            className="inline-edit-dialog qr-setup-dialog"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h4>
+              <QrCode size={17} color="#38bdf8" /> Player Setup & Mobile Provisioning QR Code
+            </h4>
+            <p className="muted-line">
+              Scan this QR code from the <strong>Network &amp; Sync Server → Devices &amp; Enrollment</strong>{' '}
+              view on a mobile phone to automatically enroll and provision this display.
+            </p>
+
+            <div className="qr-setup-preview-box">
+              <svg
+                viewBox={`0 0 ${setupQrMatrix.length} ${setupQrMatrix.length}`}
+                width="196"
+                height="196"
+                style={{
+                  background: '#ffffff',
+                  padding: '12px',
+                  borderRadius: '10px',
+                  shapeRendering: 'crispEdges',
+                }}
+                aria-label="Player Setup Enrollment QR Code"
+              >
+                {setupQrMatrix.map((row, r) =>
+                  row.map((cell, c) =>
+                    cell ? (
+                      <rect
+                        key={`${r}-${c}`}
+                        x={c}
+                        y={r}
+                        width={1}
+                        height={1}
+                        fill="#0f172a"
+                      />
+                    ) : null
+                  )
+                )}
+              </svg>
+            </div>
+
+            <div className="asset-stats-card" style={{ marginTop: '10px' }}>
+              <div>
+                <span>Enrollment Code:</span>{' '}
+                <code>{setupQrPayload.enrollmentCode}</code>
+              </div>
+              <div>
+                <span>Player Device ID:</span>{' '}
+                <strong>{setupQrPayload.deviceId}</strong>
+              </div>
+              <div>
+                <span>Display Name:</span>{' '}
+                <strong>{setupQrPayload.deviceName}</strong>
+              </div>
+              <div>
+                <span>URI Payload:</span>{' '}
+                <code style={{ wordBreak: 'break-all', fontSize: '10px' }}>
+                  {setupQrUri}
+                </code>
+              </div>
+            </div>
+
+            <div className="dialog-footer" style={{ marginTop: '12px' }}>
+              <button
+                type="button"
+                className="btn-xs"
+                onClick={() => setShowSetupQrModal(false)}
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => {
+                  saveActivePlayerSetupQr(setupQrPayload);
+                  setShowSetupQrModal(false);
+                  setAppMode('network-console');
+                  notify(
+                    'info',
+                    'Player Setup QR Code active — open Devices & Enrollment to scan with your mobile device.'
+                  );
+                }}
+              >
+                <Smartphone size={14} /> Open Mobile Enrollment Scanner
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

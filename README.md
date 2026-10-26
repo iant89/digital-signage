@@ -78,7 +78,33 @@ npm run build
 
 # Build static GitHub Pages bundle (outputs dist/ with relative asset paths, 404.html & .nojekyll)
 npm run build:pages
+
+# Find the signage server on the local network (default port 4000)
+npm run scan:server -- --subnet 192.168.1.0/24 --json
 ```
+
+---
+
+## LAN Discovery (Windows CLI)
+
+The management server exposes an unauthenticated, secret-free `GET /api/v1/discovery` descriptor. A dependency-free scanner uses it to find the server on the LAN instead of relying on a hardcoded IP.
+
+```bat
+:: cmd.exe — auto-detect local subnets
+tools\windows\find-signage-server.cmd
+
+:: cmd.exe — explicit subnet + JSON report
+tools\windows\find-signage-server.cmd --subnet 192.168.1.0/24 --port 4000 --json
+```
+
+```powershell
+# PowerShell front-end
+.\tools\windows\Find-SignageServer.ps1 -Subnet 192.168.1.0/24 -Json -First
+```
+
+Or run the cross-platform CLI directly: `node tools/network-scanner/find-signage-server.mjs --subnet 192.168.1.0/24`.
+
+The scanner enumerates local IPv4 subnets, concurrently TCP-probes the configured port, and verifies open ports against the discovery contract (`service = "digital-signage-studio"`, protocol version, endpoint paths, UTC timestamp) so an unrelated web service on port 4000 is **not** misidentified. Output modes: human table, `--json`, or `--quiet` (bare base URLs). Exit codes: `0` found, `1` not found, `2` invalid usage. Requires Node.js 18+ (no `npm install` needed). Full reference: [`tools/network-scanner/README.md`](tools/network-scanner/README.md).
 
 ---
 

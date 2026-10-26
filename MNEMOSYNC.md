@@ -6,10 +6,10 @@
 
 ## Current Project Snapshot
 
-- **Active Branch**: `arena/de0423fc-digital-signage`
+- **Active Branch**: `arena/f3d49258-digital-signage` (branched from merged `main` @ `1d646de`)
 - **Build Status**: Passing (`npm run build` — zero TypeScript or Vite bundle errors)
-- **Test Status**: Passing (`npm test` — 7 test files, 43 tests covering unit, archive fuzzing, React UI, 19-step E2E, all 10 network synchronization acceptance tests, Phase 14 enterprise extensions, and Phase 15 fleet operations unit/API/UI suites)
-- **Running Services** (start on demand):
+- **Test Status**: Passing (`npm test` — 9 test files, 59 tests covering unit, archive fuzzing, React UI, 19-step E2E, all 10 network synchronization acceptance tests, Phase 14 enterprise, Phase 15 fleet operations, and Phase 16 LAN discovery unit/integration suites)
+- **Running Services** (start on demand; backend running on port 4000 this session):
   - **Backend API & WebSocket Server**: Port `4000` (`npm run dev:server` via `tsx server/index.ts`, bound to `0.0.0.0:4000`)
   - **Frontend Vite Studio & Management App**: Port `5173` (`npm run dev`, bound to `0.0.0.0:5173`, proxying `/api` and `/ws` to `127.0.0.1:4000`)
 
@@ -180,6 +180,30 @@
 
 6. **Verification**: Added `tests/unit/phase15-fleet-operations.test.ts` (8 tests) and `tests/integration/phase15-fleet-operations.test.ts` (5 API tests), plus a new browser test in `tests/browser/studio-ui.test.tsx`. `npm test` → 7 files / 43 tests passing; `npm run build` → clean TypeScript + Vite production bundle.
 
+### [2026-10-26 — Session 12] Phase 16 — Windows CLI LAN Discovery Scanner
+
+**Trigger**: User asked for "a windows cli network scanner that can detect the signage server on the local network" on the new branch `arena/f3d49258-digital-signage` (freshly cut from merged `main` @ `1d646de`).
+
+1. **Discovery contract (`server/app.ts`, `src/services/staticServerSimulator.ts`, `server/index.ts`)**:
+   - Added unauthenticated `GET /api/v1/discovery` returning `service: "digital-signage-studio"`, `protocolVersion: 1`, stable `instanceId` (`srv-` + first 16 hex of `sha256Hex(storageDir)`), display name, app version, UTC time, scheme/hostname/port/authority/base URL, endpoint paths and feature flags. No tokens, credentials or device data are exposed.
+   - Exported `SIGNAGE_DISCOVERY_SERVICE_ID`, `SIGNAGE_DISCOVERY_PROTOCOL_VERSION`, `SIGNAGE_DISCOVERY_PATH` for reuse; startup log now prints the discovery URL; the static Pages simulator mirrors the descriptor with `simulated: true`.
+   - Port/scheme are derived from the request `Host` header / `x-forwarded-proto` / socket TLS state — **not** from `process.env.PORT`, so reverse proxies and random test ports report correctly.
+
+2. **Scanner implementation (`tools/network-scanner/`, `tools/windows/`)**:
+   - `discovery-core.mjs` holds pure, dependency-free helpers: IPv4⇄uint32, contiguous netmask↔prefix, `parseCidr`, `expandTargetSpec` (CIDR / single IP / `start-end` range), `normalizeTargets`, `getLocalIpv4Networks`, `resolveScanTargets` (loopback fallback), `buildBaseUrl` / `buildDiscoveryUrl` (IPv6 bracketing), `isSignageDiscovery`, `mapWithConcurrency` and `parseCliArgs` (GNU + short + PowerShell-style + inline `=` values).
+   - `find-signage-server.mjs` is the zero-dependency Node 18+ CLI: auto-detect subnets → bounded concurrent TCP connect probe → HTTP GET discovery descriptor → strict service verification → human / `--json` / `--quiet` output. Exit codes `0` found, `1` not found, `2` invalid usage.
+   - Windows entry points: `tools/windows/find-signage-server.cmd` (cmd.exe) and `tools/windows/Find-SignageServer.ps1` (PowerShell 5.1+ cmdlet-style wrapper), plus `npm run scan:server`.
+
+3. **Gotchas / decisions worth remembering**:
+   - **Verification, not just port knocking**: an open port 4000 is not enough. `isSignageDiscovery` requires matching `service`, numeric `protocolVersion`, parseable `serverTimeUtc` and `endpoints.discovery`, so a printer/decoy web UI on 4000 is rejected (covered by an integration test).
+   - **IPv4-only auto-detection**: `os.networkInterfaces()` IPv4 addresses + netmasks are converted to CIDRs; `169.254.0.0/16` is filtered by default to avoid APIPA/virtual-adapter noise (`--include-link-local` re-enables it). IPv6 literals are still bracketed correctly when building URLs.
+   - **Safety cap**: subnets larger than `--max-hosts` (default 4096) are refused rather than flooding a LAN. `/31` and `/32` are treated as point-to-point / single-host with no network/broadcast waste.
+   - **Pure fallback helper**: `resolveScanTargets(options, detectedNetworks)` was extracted after a manual run exposed an accidental `const` reassignment in the no-NIC path. Unit tests now cover the fallback directly, so the CLI can't regress on headless/CI hosts.
+   - **Scanned address wins**: the CLI overrides the descriptor's advertised `baseUrl`/`port` with the actual scanned IP/port, because a server behind a proxy may advertise a different hostname or default port.
+   - **PowerShell wrapper is thin on purpose**: it delegates to the tested Node scanner instead of duplicating subnet/concurrency logic in a second language. `pwsh` is not installed in this Linux sandbox, so the `.ps1` is intentionally small and reviewed rather than executed here.
+
+4. **Verification**: Added `tests/unit/network-discovery.test.mjs` (11 tests) and `tests/integration/network-discovery.test.mjs` (5 tests, including spawning the CLI as a child process against a real Fastify server and against a decoy HTTP service). `npm test` → 9 files / 59 tests passing; `npm run build` → clean. Manual live check against `npm run dev:server` on port 4000 returned `http://127.0.0.1:4000` in `--quiet` mode and a full verified descriptor in `--json` mode.
+
 ---
 
 ## Key Credentials & Test Constants Reference
@@ -193,3 +217,6 @@
 - **Phase 15 Default Retention Policy**: 30 days / 5,000 rows; backup retention 30 days
 - **Phase 15 API Prefix**: `/api/v1/operations/*` (summary, proof-of-play, playback-events, health, health-samples, alerts, alert-rules, backups, retention)
 - **Phase 15 Test Fixtures**: `tests/unit/phase15-fleet-operations.test.ts`, `tests/integration/phase15-fleet-operations.test.ts`
+- **Phase 16 LAN Discovery Constants**: service id `digital-signage-studio`, protocol version `1`, endpoint `/api/v1/discovery`, default port `4000`, default scheme `http`
+- **Phase 16 CLI Entry Points**: `tools/windows/find-signage-server.cmd`, `tools/windows/Find-SignageServer.ps1`, `node tools/network-scanner/find-signage-server.mjs`, `npm run scan:server -- --subnet <cidr>`
+- **Phase 16 Test Fixtures**: `tests/unit/network-discovery.test.mjs`, `tests/integration/network-discovery.test.mjs`

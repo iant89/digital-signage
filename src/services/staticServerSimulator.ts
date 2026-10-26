@@ -366,6 +366,50 @@ async function handleSimulatedApiRequest(urlPath: string, init?: RequestInit): P
   const [pathOnly, queryString = ''] = urlPath.split('?');
   const query = new URLSearchParams(queryString);
 
+  if (pathOnly === '/api/v1/discovery' && method === 'GET') {
+    // Static Pages has no LAN server, but the browser-side simulator still
+    // answers the discovery contract so client probes behave consistently.
+    const pageScheme =
+      typeof window !== 'undefined' && window.location && window.location.protocol === 'https:' ? 'https' : 'http';
+    const authority =
+      typeof window !== 'undefined' && window.location && window.location.host
+        ? window.location.host
+        : 'static-pages.local:4000';
+    return jsonResponse({
+      service: 'digital-signage-studio',
+      protocolVersion: 1,
+      instanceId: 'srv-sim-static-pages',
+      displayName: 'Digital Signage Studio (Static Simulator)',
+      applicationVersion: '1.0.0',
+      serverTimeUtc: nowIso,
+      scheme: pageScheme,
+      hostname: authority.split(':')[0],
+      port: 4000,
+      authority,
+      baseUrl: `${pageScheme}://${authority}`,
+      secure: pageScheme === 'https',
+      requiresAuthentication: false,
+      simulated: true,
+      endpoints: {
+        discovery: '/api/v1/discovery',
+        overview: '/api/v1/server/overview',
+        diagnostics: '/api/v1/diagnostics',
+        operations: '/api/v1/operations/summary',
+        websocket: '/ws',
+      },
+      features: [
+        'network-sync',
+        'device-enrollment',
+        'package-repository',
+        'playlists-schedules',
+        'synchronized-sessions',
+        'clock-sync',
+        'remote-commands',
+        'fleet-operations',
+      ],
+    });
+  }
+
   if (urlPath === '/api/v1/server/overview' && method === 'GET') {
     const online = store.devices.filter((d) => d.status === 'ONLINE').length;
     const offline = store.devices.filter((d) => d.status !== 'ONLINE').length;

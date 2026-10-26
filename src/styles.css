@@ -2423,7 +2423,7 @@ body.kiosk-lockout-active .app-global-nav {
   height: calc(16 * var(--handle-unit));
   box-sizing: border-box;
   border: calc(3 * var(--handle-unit)) solid #0284c7;
-  border-radius: calc(3 * var(--handle-unit));
+  border-radius: 50%;
   background: #fff;
   pointer-events: none;
 }

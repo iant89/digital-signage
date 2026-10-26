@@ -270,3 +270,7 @@ This document tracks the end-to-end engineering roadmap for **Digital Signage St
 - [x] Restore original 16px resize and 20px rotation grabbers/hit targets, removing doubled and coarse-pointer minimum hitboxes. Keep extended offset rotation stem, guide, snapping and editor stacking fixes.
 - [x] Resize along the object's rotated axes with stable opposite-edge anchoring; aspect locks and undo remain supported.
 - [x] Updated geometry/UI regressions for padded bounds, rotated resizing and normal handle units. Verification: 93 tests / 15 files passing; production build passing.
+
+## Circular Grabbers
+
+- [x] Change resize grabber visuals to circles, retaining current dimensions, positions and hit areas. Rotation grabber remains circular. Verification: 93 tests pass; production build passes.

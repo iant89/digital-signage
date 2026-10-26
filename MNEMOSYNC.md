@@ -325,3 +325,8 @@
 - Added oriented resize geometry: project pointer deltas into rotated local axes, resize there, then map the shifted center back to scene space while preserving the opposite edge/corner. Removes diagonal-envelope proportional fallback from the active canvas path; object-level/scene aspect locks still apply.
 - Restored normal 16px resize/20px rotation visual AND hit-target sizes in logical canvas pixels, removing enlarged coarse-pointer targets and inverse-zoom handle scaling. Retained quarter-width extended rotation stem (screen-size compensated), protractor, 5-degree ticks, major snap holds and independent editor stacking.
 - Updated existing authored-position test for 4px padding and added oriented bounds/resize regression. Verification: all 93 tests / 15 files pass; TypeScript/Vite production build passes with existing chunk-size warning.
+
+### [2026-10-26] Circular grabber visuals
+
+- Changed shared grabber pseudo-element border radius to 50%, so resize grabbers are circles like the rotation grabber. No change to dimensions, padding, hit areas or interaction behavior.
+- Verification: 93 tests / 15 files passing; production TypeScript/Vite build passing with existing bundle-size warning.

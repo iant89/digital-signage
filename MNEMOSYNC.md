@@ -318,3 +318,15 @@
 - Grabbers use transparent outer pointer targets with pseudo-element visual marks: resize 32px hitbox / 16px visual, rotation 40px / 20px. Coarse-pointer devices use minimum 48px targets. Inverse-zoom CSS custom property on the selection box keeps these screen-space sizes usable when zoomed out.
 - Canvas surface permits editor controls outside scene bounds; authored content is clipped in its isolated content layer, preventing extended stems from being cut off near the top edge.
 - Verification: 92 tests / 15 files pass; production TypeScript/Vite build passes with existing bundle-size warning. UI regression checks inverse zoom unit, stem structure, handles and rotation gesture initiation. Physical mobile hit testing remains recommended.
+
+### [2026-10-26] Restore oriented selection with slight padding
+
+- On `arena/11116440-digital-signage`, per user revision, replaced upright outer envelopes with snug object-aligned boxes that rotate about the component center and add 4 canvas pixels on each side. Rendered scale is accounted for without scaling the gap. Group/multi-selection outlines follow the same convention.
+- Added oriented resize geometry: project pointer deltas into rotated local axes, resize there, then map the shifted center back to scene space while preserving the opposite edge/corner. Removes diagonal-envelope proportional fallback from the active canvas path; object-level/scene aspect locks still apply.
+- Restored normal 16px resize/20px rotation visual AND hit-target sizes in logical canvas pixels, removing enlarged coarse-pointer targets and inverse-zoom handle scaling. Retained quarter-width extended rotation stem (screen-size compensated), protractor, 5-degree ticks, major snap holds and independent editor stacking.
+- Updated existing authored-position test for 4px padding and added oriented bounds/resize regression. Verification: all 93 tests / 15 files pass; TypeScript/Vite production build passes with existing chunk-size warning.
+
+### [2026-10-26] Circular grabber visuals
+
+- Changed shared grabber pseudo-element border radius to 50%, so resize grabbers are circles like the rotation grabber. No change to dimensions, padding, hit areas or interaction behavior.
+- Verification: 93 tests / 15 files passing; production TypeScript/Vite build passing with existing bundle-size warning.

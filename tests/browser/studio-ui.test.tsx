@@ -394,7 +394,7 @@ describe('Digital Signage Studio React UI Integration', () => {
     });
     const selectionBox = document.querySelector('.selection-bounding-box') as HTMLElement;
     expect(selectionBox).toBeTruthy();
-    expect(selectionBox.style.left).toBe(`${actualFirstX}px`);
+    expect(selectionBox.style.left).toBe(`${actualFirstX - 4}px`);
 
     // Group firstEl and secondEl
     const origX1 = firstEl.x;

@@ -263,3 +263,14 @@ This document tracks the end-to-end engineering roadmap for **Digital Signage St
 - [x] Separate visible marks from transparent targets: 16px resize marks in 32px targets, 20px rotation mark in a 40px target; touch/coarse pointers receive 48px minimum targets.
 - [x] Keep controls screen-sized through canvas zoom and allow extended controls outside scene edges while clipping authored content separately.
 - [x] Regression covers zoom compensation, stem placement structure and rotation initiation. Verification: 92 tests / 15 files passing; production build passing.
+
+## Restore Snug Rotating Selection & Normal Grabbers
+
+- [x] Restore object-aligned, rotating selection boxes with a 4px canvas-space gap around each edge, including multi-selection outlines and scaled objects.
+- [x] Restore original 16px resize and 20px rotation grabbers/hit targets, removing doubled and coarse-pointer minimum hitboxes. Keep extended offset rotation stem, guide, snapping and editor stacking fixes.
+- [x] Resize along the object's rotated axes with stable opposite-edge anchoring; aspect locks and undo remain supported.
+- [x] Updated geometry/UI regressions for padded bounds, rotated resizing and normal handle units. Verification: 93 tests / 15 files passing; production build passing.
+
+## Circular Grabbers
+
+- [x] Change resize grabber visuals to circles, retaining current dimensions, positions and hit areas. Rotation grabber remains circular. Verification: 93 tests pass; production build passes.

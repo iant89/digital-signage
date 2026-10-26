@@ -2402,11 +2402,11 @@ body.kiosk-lockout-active .app-global-nav {
 .rotation-guide-value { fill: #fff; font: 700 32px system-ui, sans-serif; font-variant-numeric: tabular-nums; }
 .rotation-guide-caption { fill: #9dbbd0; font: 8px system-ui, sans-serif; letter-spacing: 2px; }
 
-/* Screen-sized grabbers: visual marks stay compact while transparent targets are 2× wider. */
+/* Normal-size grabbers; selection padding separates them from the component. */
 .selection-bounding-box { --handle-unit: 1px; }
 .resize-handle, .rotation-handle {
-  width: calc(32 * var(--handle-unit));
-  height: calc(32 * var(--handle-unit));
+  width: calc(16 * var(--handle-unit));
+  height: calc(16 * var(--handle-unit));
   transform: translate(-50%, -50%);
   border: 0;
   border-radius: 0;
@@ -2423,7 +2423,7 @@ body.kiosk-lockout-active .app-global-nav {
   height: calc(16 * var(--handle-unit));
   box-sizing: border-box;
   border: calc(3 * var(--handle-unit)) solid #0284c7;
-  border-radius: calc(3 * var(--handle-unit));
+  border-radius: 50%;
   background: #fff;
   pointer-events: none;
 }
@@ -2438,19 +2438,19 @@ body.kiosk-lockout-active .app-global-nav {
 .rotation-handle-stem {
   position: absolute;
   left: 25%;
-  top: calc(-84 * var(--handle-unit));
+  top: calc(-84 * var(--stem-unit, 1px));
   width: calc(2 * var(--handle-unit));
-  height: calc(84 * var(--handle-unit));
+  height: calc(84 * var(--stem-unit, 1px));
   transform: translateX(-50%);
   background: #38bdf8;
   opacity: .7;
   pointer-events: none;
 }
 .rotation-handle {
-  top: calc(-84 * var(--handle-unit));
+  top: calc(-84 * var(--stem-unit, 1px));
   left: 25%;
-  width: calc(40 * var(--handle-unit));
-  height: calc(40 * var(--handle-unit));
+  width: calc(20 * var(--handle-unit));
+  height: calc(20 * var(--handle-unit));
 }
 .rotation-handle::before {
   width: calc(20 * var(--handle-unit));
@@ -2458,12 +2458,6 @@ body.kiosk-lockout-active .app-global-nav {
   border-radius: 50%;
   border-color: #090d16;
   background: #38bdf8;
-}
-@media (pointer: coarse) {
-  .resize-handle, .rotation-handle {
-    min-width: calc(48 * var(--handle-unit));
-    min-height: calc(48 * var(--handle-unit));
-  }
 }
 /* Keep extended controls reachable near scene edges without leaking authored content. */
 .canvas-logical-surface { overflow: visible; }

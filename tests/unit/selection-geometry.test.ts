@@ -1,7 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { getSelectionBounds, resizeFromSelectionBounds } from '../../src/components/studio/selectionGeometry';
+import { getSelectionBounds, resizeFromSelectionBounds, getOrientedSelectionBounds, resizeOrientedElement } from '../../src/components/studio/selectionGeometry';
 
 describe('upright selection envelope', () => {
+  it('pads an oriented rectangle and resizes in its rotated axes', () => {
+    const original = { x: 100, y: 100, width: 200, height: 100, rotation: 90 };
+    expect(getOrientedSelectionBounds(original)).toEqual({ x: 96, y: 96, width: 208, height: 108 });
+    const resized = resizeOrientedElement(original, 0, 50, 'e', false);
+    expect(resized.width).toBeCloseTo(250);
+    expect(resized.height).toBeCloseTo(100);
+    expect(resized.x + resized.width / 2).toBeCloseTo(200);
+    expect(resized.y + resized.height / 2).toBeCloseTo(175);
+  });
   it('encloses all four transformed corners at arbitrary angles and scales', () => {
     for (const rotation of [0, 30, 45, 90, 135, 180, 225, 270, 315, -25, 359]) {
       const rect = { x: 100, y: 70, width: 240, height: 80, rotation, scaleX: -1.3, scaleY: .8 };

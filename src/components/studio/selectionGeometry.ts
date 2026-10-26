@@ -37,3 +37,28 @@ export function resizeFromSelectionBounds(original: SelectionTransform, desired:
     : handle.includes('s') ? before.y + actual.height / 2 : before.y + before.height / 2;
   return { x: centerX - width / 2, y: centerY - height / 2, width, height };
 }
+
+/** A snug oriented outline with a small canvas-pixel gap around the rendered edges. */
+export function getOrientedSelectionBounds(rect: SelectionTransform, padding = 4): SelectionRect {
+  const width = rect.width * Math.abs(rect.scaleX ?? 1) + padding * 2;
+  const height = rect.height * Math.abs(rect.scaleY ?? 1) + padding * 2;
+  return { x: rect.x + rect.width / 2 - width / 2, y: rect.y + rect.height / 2 - height / 2, width, height };
+}
+
+/** Resize in the object's rotated axes while holding the opposite oriented edge/corner. */
+export function resizeOrientedElement(original: SelectionTransform, dx: number, dy: number, handle: string, locked: boolean): SelectionRect {
+  const r = (original.rotation ?? 0) * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
+  const sx = Math.max(.000001, Math.abs(original.scaleX ?? 1)), sy = Math.max(.000001, Math.abs(original.scaleY ?? 1));
+  const localX = (c * dx + s * dy) / sx, localY = (-s * dx + c * dy) / sy;
+  const desired = { ...original };
+  if (handle.includes('e')) desired.width = Math.max(24, original.width + localX);
+  if (handle.includes('w')) desired.width = Math.max(24, original.width - localX);
+  if (handle.includes('s')) desired.height = Math.max(24, original.height + localY);
+  if (handle.includes('n')) desired.height = Math.max(24, original.height - localY);
+  const local = resizeFromSelectionBounds({ ...original, rotation: 0, scaleX: 1, scaleY: 1 }, desired, handle, locked);
+  const cx = (local.x + local.width / 2 - original.x - original.width / 2) * sx;
+  const cy = (local.y + local.height / 2 - original.y - original.height / 2) * sy;
+  return { x: original.x + original.width / 2 + c * cx - s * cy - local.width / 2,
+    y: original.y + original.height / 2 + s * cx + c * cy - local.height / 2,
+    width: local.width, height: local.height };
+}

@@ -230,7 +230,7 @@ describe('canvas context menu and resize grid', () => {
     expect(elements.find(e => e.id === underneath.id)?.y).toBe(0);
   });
 
-  it('places the selection and grabbers at the upright outer edges of a rotated component', () => {
+  it('keeps a padded selection aligned with the rotated component', () => {
     const el = firstElement();
     act(() => {
       useStudioStore.getState().updateElement(el.id, { x: 100, y: 100, width: 200, height: 100, rotation: 90, scaleX: 1, scaleY: 1, aspectRatioLocked: false });
@@ -238,29 +238,30 @@ describe('canvas context menu and resize grid', () => {
     });
     const { container } = render(<StudioCanvasWorkspace />);
     const box = container.querySelector<HTMLElement>('.selection-bounding-box')!;
-    expect(parseFloat(box.style.left)).toBeCloseTo(150);
-    expect(parseFloat(box.style.top)).toBeCloseTo(50);
-    expect(parseFloat(box.style.width)).toBeCloseTo(100);
-    expect(parseFloat(box.style.height)).toBeCloseTo(200);
-    expect(box.style.transform).toBe('');
+    expect(parseFloat(box.style.left)).toBeCloseTo(96);
+    expect(parseFloat(box.style.top)).toBeCloseTo(96);
+    expect(parseFloat(box.style.width)).toBeCloseTo(208);
+    expect(parseFloat(box.style.height)).toBeCloseTo(108);
+    expect(box.style.transform).toBe('rotate(90deg)');
     expect(box.querySelectorAll('.resize-handle')).toHaveLength(8);
     fireEvent.pointerDown(box.querySelector('.handle-e')!, { clientX: 250, clientY: 150 });
-    fireEvent.pointerMove(window, { clientX: 300, clientY: 150 });
+    fireEvent.pointerMove(window, { clientX: 250, clientY: 200 });
     fireEvent.pointerUp(window);
     expect(firstElement().rotation).toBe(90);
-    expect(firstElement().height).toBeCloseTo(150);
-    expect(parseFloat(box.style.left)).toBeCloseTo(150);
-    expect(parseFloat(box.style.width)).toBeCloseTo(150);
+    expect(firstElement().width).toBeCloseTo(250);
+    expect(parseFloat(box.style.left)).toBeCloseTo(71);
+    expect(parseFloat(box.style.width)).toBeCloseTo(258);
     act(() => useStudioStore.getState().undo());
     expect(firstElement().height).toBeCloseTo(100);
   });
 
-  it('keeps grabber sizes independent of canvas zoom and places the rotation stem outside the box', () => {
+  it('restores normal grabber units while keeping the extended stem zoom compensated', () => {
     const el = firstElement();
     act(() => useStudioStore.setState({ selectedElementIds: [el.id], canvasZoom: .25 }));
     const { container } = render(<StudioCanvasWorkspace />);
     const box = container.querySelector<HTMLElement>('.selection-bounding-box')!;
-    expect(box.style.getPropertyValue('--handle-unit')).toBe('4px');
+    expect(box.style.getPropertyValue('--handle-unit')).toBe('1px');
+    expect(box.style.getPropertyValue('--stem-unit')).toBe('4px');
     expect(box.querySelector('.rotation-handle-stem')?.getAttribute('aria-hidden')).toBe('true');
     expect(box.querySelectorAll('.resize-handle')).toHaveLength(8);
     act(() => useStudioStore.setState({ canvasZoom: 1 }));

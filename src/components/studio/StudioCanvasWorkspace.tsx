@@ -1,4 +1,4 @@
-import { getSelectionBounds, resizeFromSelectionBounds } from './selectionGeometry';
+import { getOrientedSelectionBounds, resizeOrientedElement } from './selectionGeometry';
 import { RotationGuide, snapRotation } from './rotationGuide';
 // ============================================================================
 // src/components/studio/StudioCanvasWorkspace.tsx — Interactive Visual Canvas
@@ -148,7 +148,7 @@ export const StudioCanvasWorkspace: React.FC = () => {
     return activeScene.elements.find((e) => e.id === selectedElementIds[0]) ?? null;
   }, [activeScene, selectedElementIds]);
 
-  const selectionBounds = primarySelected ? getSelectionBounds(primarySelected) : null;
+  const selectionBounds = primarySelected ? getOrientedSelectionBounds(primarySelected) : null;
 
   const applyDragCoordinates = useCallback(
     (clientX: number, clientY: number) => {
@@ -192,13 +192,7 @@ export const StudioCanvasWorkspace: React.FC = () => {
         const h = dragState.handle;
         const original = { x: dragState.origX, y: dragState.origY, width: dragState.origW,
           height: dragState.origH, rotation: dragState.rotation, scaleX: dragState.scaleX, scaleY: dragState.scaleY };
-        const bounds = getSelectionBounds(original);
-        const desired = { ...bounds };
-        if (h.includes('e')) desired.width = Math.max(24, bounds.width + dx);
-        if (h.includes('s')) desired.height = Math.max(24, bounds.height + dy);
-        if (h.includes('w')) { desired.width = Math.max(24, bounds.width - dx); desired.x = bounds.x + bounds.width - desired.width; }
-        if (h.includes('n')) { desired.height = Math.max(24, bounds.height - dy); desired.y = bounds.y + bounds.height - desired.height; }
-        const raw = resizeFromSelectionBounds(original, desired, h, dragState.aspectLocked);
+        const raw = resizeOrientedElement(original, dx, dy, h, dragState.aspectLocked);
         if (!resizeOrigin.current || Math.hypot(clientX - resizeOrigin.current.x, clientY - resizeOrigin.current.y) > 5) {
           updateElement(dragState.elementId, raw, false);
         }
@@ -209,10 +203,15 @@ export const StudioCanvasWorkspace: React.FC = () => {
           setGridSnapped(false);
           resizeTimer.current = setTimeout(() => {
             if (!project.settings.snapToGrid) return;
-            const snappedBounds = snapResizeToGrid(getSelectionBounds({ ...original, ...raw }), h,
+            const snapped = snapResizeToGrid(raw, h,
               project.settings.gridSizePx, dragState.aspectLocked);
-            updateElement(dragState.elementId,
-              resizeFromSelectionBounds(original, snappedBounds, h, dragState.aspectLocked), false);
+            const localDx = h.includes('w') ? original.width - snapped.width : h.includes('e') ? snapped.width - original.width : 0;
+            const localDy = h.includes('n') ? original.height - snapped.height : h.includes('s') ? snapped.height - original.height : 0;
+            const r = original.rotation * Math.PI / 180;
+            const scaledX = localDx * Math.abs(original.scaleX), scaledY = localDy * Math.abs(original.scaleY);
+            updateElement(dragState.elementId, resizeOrientedElement(original,
+              Math.cos(r) * scaledX - Math.sin(r) * scaledY,
+              Math.sin(r) * scaledX + Math.cos(r) * scaledY, h, dragState.aspectLocked), false);
             setGridSnapped(true);
           }, 1800);
         }
@@ -489,10 +488,11 @@ export const StudioCanvasWorkspace: React.FC = () => {
                 className="group-sibling-bounding-box"
                 style={{
                   position: 'absolute',
-                  left: `${getSelectionBounds(el).x}px`,
-                  top: `${getSelectionBounds(el).y}px`,
-                  width: `${getSelectionBounds(el).width}px`,
-                  height: `${getSelectionBounds(el).height}px`,
+                  left: `${getOrientedSelectionBounds(el).x}px`,
+                  top: `${getOrientedSelectionBounds(el).y}px`,
+                  width: `${getOrientedSelectionBounds(el).width}px`,
+                  height: `${getOrientedSelectionBounds(el).height}px`,
+                  transform: `rotate(${el.rotation || 0}deg)`,
                   border: '2px dashed #38bdf8',
                   borderRadius: '4px',
                   pointerEvents: 'none',
@@ -546,11 +546,13 @@ export const StudioCanvasWorkspace: React.FC = () => {
               data-element-id={primarySelected.id}
               className="selection-bounding-box"
               style={{
-                '--handle-unit': `${1 / canvasZoom}px`,
+                '--handle-unit': '1px',
+                '--stem-unit': `${1 / canvasZoom}px`,
                 left: `${selectionBounds.x}px`,
                 top: `${selectionBounds.y}px`,
                 width: `${selectionBounds.width}px`,
                 height: `${selectionBounds.height}px`,
+                transform: `rotate(${primarySelected.rotation || 0}deg)`,
               } as React.CSSProperties}
             >
               <div className="selection-dimension-pill">

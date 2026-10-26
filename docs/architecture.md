@@ -75,3 +75,27 @@ Fleet Operations closes the operational visibility gaps in the addendum: player 
 3. **Presentation layer — `NetworkManagementView.tsx`, `staticServerSimulator.ts`**:
    - The **Fleet Operations** tab renders health KPIs, proof-of-play filters and daily bars, FPS sparklines, editable alert rules, acknowledgement, backup management and telemetry-injection diagnostics.
    - The static Pages simulator implements the same `/api/v1/operations/*` contract in memory using the pure domain layer, and the UI has a deterministic offline demo fallback for headless environments. This keeps the console fully functional with or without the Fastify backend.
+
+---
+
+## 5. LAN Discovery (Phase 16)
+
+The management server advertises a minimal, unauthenticated identity document at `GET /api/v1/discovery`:
+
+| Field | Purpose |
+|-------|---------|
+| `service`, `protocolVersion` | Stable contract check (`digital-signage-studio`, `1`). |
+| `instanceId` | Stable per-installation ID derived from the storage directory hash. |
+| `displayName`, `applicationVersion`, `serverTimeUtc` | Human/operator context and clock sanity. |
+| `scheme`, `hostname`, `port`, `authority`, `baseUrl`, `secure` | How to reach this instance (derived from the request `Host` / forwarded proto, not `process.env.PORT`). |
+| `endpoints` | `discovery`, `overview`, `diagnostics`, `operations`, `websocket` paths. |
+| `features` | Capability flags (`network-sync`, `package-repository`, `fleet-operations`, …). |
+| `requiresAuthentication` | Always `false` for this endpoint; it returns **no secrets** and **no device data**. |
+
+`tools/network-scanner/` implements the client side in three layers:
+
+1. **Pure helpers** (`discovery-core.mjs`) — IPv4/CIDR math, local NIC subnet enumeration, target expansion, URL construction, descriptor validation, CLI parsing and bounded concurrency.
+2. **Node CLI** (`find-signage-server.mjs`) — auto-detect subnets → concurrent TCP connect probe → HTTP GET discovery descriptor → strict verification → table / JSON / quiet output, with a `--max-hosts` safety cap and cooperative `--first` cancellation.
+3. **Windows entry points** (`tools/windows/`) — `find-signage-server.cmd` for cmd.exe and `Find-SignageServer.ps1` for PowerShell 5.1+, both delegating to the tested Node CLI. `npm run scan:server` exposes the same tool cross-platform.
+
+Verification is deliberately stricter than port scanning: `isSignageDiscovery` requires a matching `service` id, numeric `protocolVersion`, parseable `serverTimeUtc` and `endpoints.discovery`. The scanned IP/port always overrides any advertised `baseUrl`, so reverse-proxied or misconfigured `Host` headers cannot redirect an operator to the wrong machine. `src/services/staticServerSimulator.ts` mirrors the descriptor (with `simulated: true`) for static GitHub Pages parity.

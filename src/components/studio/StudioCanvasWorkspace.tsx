@@ -1,3 +1,4 @@
+import { RotationGuide, snapRotation } from './rotationGuide';
 // ============================================================================
 // src/components/studio/StudioCanvasWorkspace.tsx — Interactive Visual Canvas
 // Logical Reference Resolution, Rulers, Snap Guides, Resize/Rotate Handles
@@ -58,6 +59,8 @@ export const StudioCanvasWorkspace: React.FC = () => {
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const touchGesture = useRef<{ x: number; y: number; pointerId: number } | null>(null);
+  const suppressTouchContext = useRef(false);
   const holdRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resizeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resizeOrigin = useRef<{ x: number; y: number } | null>(null);
@@ -78,12 +81,21 @@ export const StudioCanvasWorkspace: React.FC = () => {
       y: Math.max(8, Math.min(y, window.innerHeight - 310)) });
   };
   useEffect(() => {
-    const end = () => { clearHold(); };
+    const move = (e: PointerEvent) => {
+      const gesture = touchGesture.current;
+      if (gesture && e.pointerId === gesture.pointerId && Math.hypot(e.clientX - gesture.x, e.clientY - gesture.y) > 8) {
+        suppressTouchContext.current = true;
+        clearHold();
+      }
+    };
+    const end = () => { clearHold(); touchGesture.current = null; };
+    window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', end);
     window.addEventListener('pointercancel', end);
     window.addEventListener('blur', end);
     return () => {
       end();
+      window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', end);
       window.removeEventListener('pointercancel', end);
       window.removeEventListener('blur', end);
@@ -97,9 +109,9 @@ export const StudioCanvasWorkspace: React.FC = () => {
       if (!menuRef.current?.contains(e.target as Node)) setContextMenu(null);
     };
     const escape = (e: KeyboardEvent) => { if (e.key === 'Escape') setContextMenu(null); };
-    window.addEventListener('pointerdown', close);
+    window.addEventListener('pointerdown', close, true);
     window.addEventListener('keydown', escape);
-    return () => { window.removeEventListener('pointerdown', close); window.removeEventListener('keydown', escape); };
+    return () => { window.removeEventListener('pointerdown', close, true); window.removeEventListener('keydown', escape); };
   }, [contextMenu]);
 
   const [dragState, setDragState] = useState<DragMode | null>(null);
@@ -225,7 +237,7 @@ export const StudioCanvasWorkspace: React.FC = () => {
         const localX = (clientX - rect.left) / canvasZoom;
         const localY = (clientY - rect.top) / canvasZoom;
         const angleRad = Math.atan2(localY - dragState.centerY, localX - dragState.centerX);
-        const angleDeg = Math.round((angleRad * 180) / Math.PI + 90);
+        const angleDeg = snapRotation((angleRad * 180) / Math.PI + 90);
         updateElement(dragState.elementId, { rotation: angleDeg }, false);
       }
     },
@@ -317,13 +329,16 @@ export const StudioCanvasWorkspace: React.FC = () => {
       onContextMenu={(e) => {
         if ((e.target as HTMLElement).closest('textarea,input')) return;
         e.preventDefault();
+        if (suppressTouchContext.current) return;
         const target = (e.target as HTMLElement).closest<HTMLElement>('[data-element-id]');
         openContextMenu(e.clientX, e.clientY, target?.dataset.elementId);
       }}
       onPointerDownCapture={(e) => {
+        suppressTouchContext.current = false;
         if (e.pointerType !== 'touch' || (e.target as HTMLElement).closest('.resize-handle,.rotation-handle,textarea,input')) return;
         clearHold();
         const target = (e.target as HTMLElement).closest<HTMLElement>('[data-element-id]');
+        touchGesture.current = { x: e.clientX, y: e.clientY, pointerId: e.pointerId };
         holdRef.current = setTimeout(() => openContextMenu(e.clientX, e.clientY, target?.dataset.elementId), 1500);
       }}
       onPointerMove={handlePointerMove}
@@ -535,6 +550,11 @@ export const StudioCanvasWorkspace: React.FC = () => {
             )
           )}
 
+          {dragState?.kind === 'rotate' && primarySelected && (
+            <RotationGuide x={dragState.centerX} y={dragState.centerY}
+              angle={snapRotation(primarySelected.rotation || 0)} zoom={canvasZoom} />
+          )}
+
           {/* Selection Bounding Box & 8 Resize + 1 Rotate Handle */}
           {primarySelected && primarySelected.visible && (
             <div
@@ -563,8 +583,10 @@ export const StudioCanvasWorkspace: React.FC = () => {
                     title="Drag to Rotate"
                     style={{ touchAction: 'none', userSelect: 'none' }}
                     onPointerDown={(e) => {
+                      if (e.button !== 0) return;
                       e.stopPropagation();
                       e.preventDefault();
+                      useStudioStore.getState().commitProjectChange('Rotate Element', () => {});
                       try {
                         e.currentTarget.setPointerCapture(e.pointerId);
                       } catch {

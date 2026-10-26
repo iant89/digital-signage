@@ -1,3 +1,4 @@
+import { snapRotation } from '../../src/components/studio/rotationGuide';
 import React from 'react';
 import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
 import { render, fireEvent, screen, act, cleanup } from '@testing-library/react';
@@ -40,23 +41,76 @@ describe('canvas context menu and resize grid', () => {
     expect(useStudioStore.getState().project.scenes[0].elements.some(e => e.id === el.id)).toBe(true);
   });
 
-  it('keeps the touch menu open through movement and release until an outside press', () => {
+  it('suppresses touch-hold after dragging until release and a fresh hold, but keeps an open menu visible', () => {
     const { container } = render(<StudioCanvasWorkspace />);
     const target = container.querySelector(`[data-element-id="${firstElement().id}"]`)!;
     fireEvent.pointerDown(target, { pointerType: 'touch', clientX: 100, clientY: 100 });
-    act(() => vi.advanceTimersByTime(1500));
-    expect(screen.getByRole('menu')).toBeTruthy();
-    fireEvent.keyDown(window, { key: 'Escape' });
-    expect(screen.queryByRole('menu')).toBeNull();
-    fireEvent.pointerDown(target, { pointerType: 'touch', clientX: 100, clientY: 100 });
     fireEvent.pointerMove(window, { clientX: 150, clientY: 100 });
     act(() => vi.advanceTimersByTime(1800));
+    expect(screen.queryByRole('menu')).toBeNull();
+    fireEvent.pointerMove(window, { clientX: 100, clientY: 100 });
+    act(() => vi.advanceTimersByTime(1800));
+    fireEvent.contextMenu(target);
+    expect(screen.queryByRole('menu')).toBeNull();
+    fireEvent.pointerUp(window);
+    act(() => vi.advanceTimersByTime(1800));
+    expect(screen.queryByRole('menu')).toBeNull();
+    fireEvent.pointerDown(target, { pointerType: 'touch', clientX: 100, clientY: 100 });
+    act(() => vi.advanceTimersByTime(1500));
     expect(screen.getByRole('menu')).toBeTruthy();
     fireEvent.pointerMove(window, { clientX: 180, clientY: 120 });
     fireEvent.pointerUp(window);
     expect(screen.getByRole('menu')).toBeTruthy();
     fireEvent.pointerDown(document.body);
     expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('dismisses the context menu on component presses even when they stop propagation', () => {
+    const { container } = render(<StudioCanvasWorkspace />);
+    const target = container.querySelector(`[data-element-id="${firstElement().id}"]`)!;
+    fireEvent.contextMenu(target, { clientX: 100, clientY: 100 });
+    expect(screen.getByRole('menu')).toBeTruthy();
+    fireEvent.pointerDown(screen.getByRole('menuitem', { name: 'Copy' }));
+    expect(screen.getByRole('menu')).toBeTruthy();
+    fireEvent.pointerDown(target, { button: 0, clientX: 100, clientY: 100 });
+    expect(screen.queryByRole('menu')).toBeNull();
+    fireEvent.pointerUp(window);
+    fireEvent.contextMenu(target);
+    fireEvent.pointerDown(target, { button: 0, pointerType: 'touch', clientX: 100, clientY: 100 });
+    expect(screen.queryByRole('menu')).toBeNull();
+    fireEvent.pointerUp(window);
+  });
+
+  it('snaps inclusive five-degree bands around all eight stops including wraparound', () => {
+    for (let stop = 0; stop < 360; stop += 45) {
+      for (const offset of [-5, -4, 0, 4, 5]) expect(snapRotation(stop + offset)).toBe(stop);
+      expect(snapRotation(stop + 6)).toBe((stop + 6) % 360);
+      expect(snapRotation(stop - 6)).toBe((stop - 6 + 360) % 360);
+    }
+    expect(snapRotation(720)).toBe(0);
+    expect(snapRotation(-90)).toBe(270);
+  });
+
+  it('shows a stationary labeled angle guide during rotation, snaps and supports undo', () => {
+    const el = firstElement();
+    act(() => {
+      useStudioStore.getState().updateElement(el.id, { x: 0, y: 0, width: 200, height: 200, rotation: 20 });
+      useStudioStore.setState({ selectedElementIds: [el.id], canvasZoom: 1 });
+    });
+    const { container } = render(<StudioCanvasWorkspace />);
+    fireEvent.pointerDown(container.querySelector('.rotation-handle')!, { clientX: 100, clientY: 0 });
+    const angle = 48 * Math.PI / 180;
+    fireEvent.pointerMove(window, { clientX: 100 + Math.sin(angle) * 100, clientY: 100 - Math.cos(angle) * 100 });
+    expect(firstElement().rotation).toBe(45);
+    const guide = screen.getByRole('img', { name: 'Rotation guide: 45 degrees' });
+    expect(guide.closest('.selection-bounding-box')).toBeNull();
+    expect((guide as HTMLElement).style.transform).not.toContain('rotate');
+    expect(guide.querySelectorAll('.rotation-guide-label')).toHaveLength(8);
+    expect(guide.querySelector('.rotation-guide-value')?.textContent).toBe('45°');
+    fireEvent.pointerUp(window);
+    expect(screen.queryByRole('img', { name: /Rotation guide/ })).toBeNull();
+    act(() => useStudioStore.getState().undo());
+    expect(firstElement().rotation).toBe(20);
   });
 
   it('shows the temporary grid, waits for dwell, snaps and hides on release', () => {

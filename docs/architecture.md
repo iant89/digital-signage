@@ -32,7 +32,8 @@ digital-signage/
 │   ├── playlist-engine/       # Playlist sequencing, schedule resolution, priority tie-breaking
 │   ├── playback-engine/       # Standalone player engine, NTP clock sync, server timeline, drift control
 │   ├── kiosk-integration/     # Fullscreen, watchdog recovery, protected maintenance auth
-│   └── diagnostics/           # Redacted structured logging, health metrics, recovery reports
+│   ├── diagnostics/           # Redacted structured logging, health metrics, recovery reports
+│   └── fleet-operations/      # Proof-of-play, health alerts, verified backups & retention (Phase 15)
 ├── server/
 │   ├── index.ts               # Fastify + WebSocket Network Management Server
 │   └── db.ts                  # SQLite relational database & content-addressed package store
@@ -54,3 +55,23 @@ To coordinate playback across multiple displays (display walls, menu boards, lob
 2. **Future Scheduled Start (`startTimeUtc`)**: The server creates a `PlaybackSession` with a future UTC start timestamp after verifying target player readiness (or applying the group's failure policy).
 3. **Deterministic Timeline Math**: At any server time $T$, every player computes `(T - startTimeUtc)` modulo the playlist cycle duration to determine the exact active scene, scene offset, transition state, and keyframe progress `Progress = (CurrentTimelinePosition - A) / Duration`.
 4. **Drift Correction**: Players report expected vs. actual timeline position; small drift (`< 120 ms`) is tolerated or slewed gently, moderate drift (`120..600 ms`) triggers a controlled seek, and large drift (`> 600 ms`) reinitializes the active scene.
+
+---
+
+## 4. Fleet Operations Subsystem (Phase 15)
+
+Fleet Operations closes the operational visibility gaps in the addendum: player health monitoring, playback-state monitoring, diagnostics, database backups and audit retention. It is deliberately split into three layers so the same deterministic math runs everywhere:
+
+1. **Pure domain layer — `@packages/fleet-operations`** (no React, Node or DOM APIs):
+   - `normalizePlaybackEvents` validates, clamps and de-duplicates untrusted player batches; `aggregateProofOfPlay` clips events to a UTC window, groups them by scene/device/day, and merges overlapping intervals per device so a replayed offline batch never inflates display time.
+   - `evaluateFleetHealth` grades each display from heartbeat staleness, clock drift, FPS, render errors, failed commands and stalled playback. Alert IDs hash `ruleId|deviceId|cooldownBucket`, making repeated evaluations idempotent.
+   - `buildBackupArchive` / `verifyBackupArchive` create canonical, secret-redacted, SHA-256 verified snapshots; `applyRetention` implements age + row-count pruning with pinned active alerts.
+
+2. **Persistence & API layer — `server/db.ts`, `server/app.ts`**:
+   - Append-only `playback_events` (unique `event_key`) and `health_samples` (unique `sample_key`) tables, `alert_rules`, `fleet_alerts` and `backups`.
+   - `/api/v1/operations/*` endpoints for summary, proof-of-play queries, telemetry ingest, alert acknowledgement, editable rules, backup create/verify/restore and retention. Device/operator/admin roles are separated; every mutation is audited and broadcast over `/ws`.
+   - Backups exclude credential tables and restore only into four whitelisted telemetry tables after recomputing every checksum. A mismatched archive returns `INTEGRITY_CHECK_FAILED` and writes an audit record.
+
+3. **Presentation layer — `NetworkManagementView.tsx`, `staticServerSimulator.ts`**:
+   - The **Fleet Operations** tab renders health KPIs, proof-of-play filters and daily bars, FPS sparklines, editable alert rules, acknowledgement, backup management and telemetry-injection diagnostics.
+   - The static Pages simulator implements the same `/api/v1/operations/*` contract in memory using the pure domain layer, and the UI has a deterministic offline demo fallback for headless environments. This keeps the console fully functional with or without the Fastify backend.

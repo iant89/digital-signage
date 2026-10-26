@@ -6,10 +6,10 @@
 
 ## Current Project Snapshot
 
-- **Active Branch**: `arena/a7831280-digital-signage`
+- **Active Branch**: `arena/de0423fc-digital-signage`
 - **Build Status**: Passing (`npm run build` — zero TypeScript or Vite bundle errors)
-- **Test Status**: Passing (`npm test` — 5 test files, 21 comprehensive test suites covering unit, archive fuzzing, UI integration, 19-step E2E workflow, all 10 network synchronization acceptance tests, and Phase 14 enterprise extensions)
-- **Running Services**:
+- **Test Status**: Passing (`npm test` — 7 test files, 43 tests covering unit, archive fuzzing, React UI, 19-step E2E, all 10 network synchronization acceptance tests, Phase 14 enterprise extensions, and Phase 15 fleet operations unit/API/UI suites)
+- **Running Services** (start on demand):
   - **Backend API & WebSocket Server**: Port `4000` (`npm run dev:server` via `tsx server/index.ts`, bound to `0.0.0.0:4000`)
   - **Frontend Vite Studio & Management App**: Port `5173` (`npm run dev`, bound to `0.0.0.0:5173`, proxying `/api` and `/ws` to `127.0.0.1:4000`)
 
@@ -148,6 +148,38 @@
 
 
 
+### [2026-10-26 — Session 11] Phase 15 — Fleet Operations, Proof-of-Play & Verified Backups
+
+**Trigger / Interpretation**: The user asked to "Start the next phase". `ROADMAP.md` showed Phases 0–14 all `[COMPLETED]`, so Phase 15 was defined from the remaining explicit gaps in `PROMPT.md` Sections 20, 32, 33 and 34: player health monitoring, playback-state monitoring, network diagnostics, database backups and audit retention.
+
+1. **New pure-TS domain package (`packages/fleet-operations/index.ts`)**:
+   - `normalizePlaybackEvents` validates/clamps/deduplicates untrusted player batches (`eventId` is the idempotency key); `aggregateProofOfPlay` clips to UTC windows, groups by scene/device-scene/device/day, and merges overlapping intervals.
+   - `evaluateFleetHealth` grades `HEALTHY`/`DEGRADED`/`CRITICAL`/`OFFLINE` from heartbeat staleness, drift, FPS, render errors, stalled playback and failed commands; `DEFAULT_ALERT_RULES` supplies 6 editable rules.
+   - `buildBackupArchive` / `verifyBackupArchive` produce canonical, secret-redacted, SHA-256-verified backups; `applyRetention` implements deterministic age + row-count pruning with pinned rows; `createDemoPlaybackEvents` / `createDemoHealthSamples` provide deterministic offline telemetry.
+   - Zero React/Node/DOM dependencies (Architectural Rules 1–3), so the exact same math runs in Fastify, Vite, static Pages fallback and Vitest.
+
+2. **SQLite schema & persistence (`server/db.ts`)**:
+   - Added `playback_events` (unique `event_key`), `health_samples` (unique `sample_key`), `alert_rules`, `fleet_alerts` (unique alert ID), and `backups` tables plus indexes; `seedOperationalDefaultsIfEmpty()` seeds default rules and 8 hours of demo playback/health history even for pre-existing databases.
+   - Added insert/list/ack/restore/prune helpers. `getBackupTables()` intentionally excludes `users` and `device_credentials`; `restoreBackupTables()` whitelists only `playback_events`, `health_samples`, `alert_rules` and `fleet_alerts` with fixed column lists inside `BEGIN IMMEDIATE` / `COMMIT` (`ROLLBACK` on error).
+
+3. **REST API (`server/app.ts`)**:
+   - New `/api/v1/operations/*` endpoints: `summary`, `proof-of-play`, `playback-events`, `health`, `health-samples`, `alerts`, `alerts/:id/acknowledge`, `alert-rules`, `backups`, `backups/:id`, `backups/:id/restore`, `retention`.
+   - RBAC: device/admin/operator may ingest telemetry; operator may read; only admin may edit rules, create/restore backups or apply retention. All mutations are audited; new fleet KPIs (`activeFleetAlerts`, `lastBackupAtUtc`, `proofOfPlayToday`) were added to `/api/v1/server/overview`.
+
+4. **Static GitHub Pages fallback & UI**:
+   - `src/services/staticServerSimulator.ts` now implements every `/api/v1/operations/*` route in memory using the same pure-TS package (query strings parsed via `URLSearchParams`; new route matches use `pathOnly`). `player-06` is seeded with a 95-second stale heartbeat and 312 ms drift so static deployments demonstrate real alerts.
+   - `NetworkManagementView.tsx` gained a sixth **Fleet Operations** tab with health KPIs, proof-of-play filters and daily bars, per-device health + FPS sparklines, editable alert rules, alert acknowledgement, backup create/verify/restore/download, retention, and telemetry-injection diagnostics. When no API is reachable, a deterministic offline demo (computed via `evaluateFleetHealth` + `aggregateProofOfPlay`) keeps the tab fully interactive — this also makes jsdom UI tests deterministic.
+
+5. **Gotchas / decisions worth remembering**:
+   - **Coverage semantics**: `totals.coverageMs` merges ALL scene intervals per device (one screen = one timeline), while `rows[].coverageMs` merges per device *within* each group. Do not sum row coverage to obtain fleet coverage when reports overlap across scenes.
+   - **Alert storms**: alert IDs are `sha256(ruleId|deviceId|cooldownBucket)`; `saveFleetAlerts` uses `INSERT OR IGNORE` so repeated heartbeats and replays never duplicate alerts and never overwrite an `ACKNOWLEDGED` state.
+   - **Offline flag**: `offlineRecorded` is set only when the player explicitly reports buffered telemetry; old timestamps alone are NOT evidence of an offline batch.
+   - **Backup integrity**: the manifest checksum includes `createdAtUtc`, `retentionDays` and per-table checksums, and `verifyBackupArchive` re-redacts rows before recomputing checksums — so both manifest edits and table edits fail with `INTEGRITY_CHECK_FAILED`.
+   - **Retention**: active alerts are pinned; `pruneOperationalData` covers playback events, health samples, fleet alerts, events and audit log with the same `applyRetention` policy as the static simulator.
+   - **UI tests**: `getByRole('heading', ...)` is used for card headings because the fleet status line also contains the phrase "proof-of-play impressions"; `getAllByText` is used for state labels that appear more than once.
+
+6. **Verification**: Added `tests/unit/phase15-fleet-operations.test.ts` (8 tests) and `tests/integration/phase15-fleet-operations.test.ts` (5 API tests), plus a new browser test in `tests/browser/studio-ui.test.tsx`. `npm test` → 7 files / 43 tests passing; `npm run build` → clean TypeScript + Vite production bundle.
+
 ---
 
 ## Key Credentials & Test Constants Reference
@@ -157,3 +189,7 @@
 - **Default Seeded Enrollment Code**: `ENROLL-APEX-2026`
 - **Default Seeded Sync Session ID**: `session-20261025-001` (Group: `group-lobby-wall`)
 - **Default Seeded Package ID**: `pkg-apex-lobby-v1`
+- **Phase 15 Default Alert Rule IDs**: `rule-device-offline`, `rule-heartbeat-stale`, `rule-playback-stalled`, `rule-clock-drift`, `rule-low-fps`, `rule-command-failures`
+- **Phase 15 Default Retention Policy**: 30 days / 5,000 rows; backup retention 30 days
+- **Phase 15 API Prefix**: `/api/v1/operations/*` (summary, proof-of-play, playback-events, health, health-samples, alerts, alert-rules, backups, retention)
+- **Phase 15 Test Fixtures**: `tests/unit/phase15-fleet-operations.test.ts`, `tests/integration/phase15-fleet-operations.test.ts`

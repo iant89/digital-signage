@@ -534,5 +534,28 @@ describe('Digital Signage Studio React UI Integration', () => {
     expect(screen.getByText(/Player Maintenance Mode Console/i)).toBeTruthy();
     expect(document.querySelector('.player-bottom-telemetry')).toBeNull();
   });
+
+  it('renders the Phase 15 Fleet Operations console with proof-of-play, health, alerts, and verified backups', () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: /Network & Sync Server/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Fleet Operations & Proof-of-Play/i }));
+
+    expect(screen.getByText(/FLEET OPERATIONS & PROOF-OF-PLAY/i)).toBeTruthy();
+    expect(screen.getByRole('heading', { name: /Proof-of-Play Impressions/i })).toBeTruthy();
+    expect(screen.getByText(/Fleet Health & Telemetry/i)).toBeTruthy();
+    expect(screen.getByText(/Alert Rules & Active Alerts/i)).toBeTruthy();
+    expect(screen.getByText(/Verified Backups & Retention/i)).toBeTruthy();
+    expect(screen.getByText(/Fleet Simulation & Diagnostics/i)).toBeTruthy();
+
+    // Deterministic offline demo must still expose working filters and rules.
+    expect(screen.getByLabelText(/Proof-of-Play Range/i)).toBeTruthy();
+    expect(screen.getByLabelText(/Proof-of-Play Grouping/i)).toBeTruthy();
+    expect(screen.getByLabelText(/Disable HEARTBEAT_STALE/i)).toBeTruthy();
+    expect(screen.getByText(/Active Fleet Alerts/i)).toBeTruthy();
+    expect(screen.getAllByText(/DEGRADED/).length).toBeGreaterThan(0);
+
+    fireEvent.change(screen.getByLabelText(/Proof-of-Play Range/i), { target: { value: 'all' } });
+    expect((screen.getByLabelText(/Proof-of-Play Range/i) as HTMLSelectElement).value).toBe('all');
+  });
 });
 

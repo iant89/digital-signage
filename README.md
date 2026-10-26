@@ -34,6 +34,20 @@ Digital Signage Studio implements all subsystems defined in the Application Desi
 5. **Network Management Server & Synchronized Playback (`server/`, `src/components/network/`)**:
    - Fastify REST API (`/api/v1/*`) + WebSocket real-time gateway (`/ws`) + SQLite relational store (`users`, `devices`, `device_credentials`, `enrollment_codes`, `groups`, `group_members`, `packages`, `playlists`, `schedules`, `sessions`, `session_devices`, `commands`, `events`, `deployments`, `audit_log`) + content-addressed `.signage` package storage.
    - **Server-Authoritative Timeline Synchronization**: Uses future scheduled UTC start times (`startTimeUtc`), multi-sample NTP-style clock offset estimation (`Offset = ((T2 - T1) + (T3 - T4)) / 2`, `RTT = (T4 - T1) - (T3 - T2)`), deterministic late-join scene/offset calculation, and automated playback drift detection & correction.
+   - **Fleet Operations (Phase 15)**: Idempotent proof-of-play ingestion with overlap-safe dwell/coverage aggregation, heartbeat health grading (`HEALTHY`/`DEGRADED`/`CRITICAL`/`OFFLINE`), six configurable deduplicated alert rules, SHA-256 verified secret-redacted backups with tamper-proof restore, and audit/telemetry retention — exposed through `/api/v1/operations/*` and the **Fleet Operations** tab in Network Management (with full static GitHub Pages fallback).
+
+---
+
+## Fleet Operations (Phase 15)
+
+The Network Management console includes a **Fleet Operations** tab backed by the pure TypeScript `@packages/fleet-operations` module. It provides:
+
+- **Proof-of-Play** — batched, idempotent playback reports (`POST /api/v1/operations/playback-events`) with UTC-window filtering, scene/device/day grouping, dwell time and de-duplicated display time.
+- **Health & Alerts** — heartbeat samples (`POST /api/v1/operations/health-samples`), deterministic cooldown-bucketed alert IDs, acknowledgement, and admin-editable thresholds (`PATCH /api/v1/operations/alert-rules/:ruleId`).
+- **Verified Backups** — `POST /api/v1/operations/backups` produces a canonical, secret-redacted SHA-256 manifest; `GET .../backups/:id` verifies it, and `POST .../backups/:id/restore` refuses any tampered archive with `INTEGRITY_CHECK_FAILED` before restoring only operational telemetry tables.
+- **Retention** — `POST /api/v1/operations/retention` applies age + row-count pruning to telemetry, events and the audit log while pinning active alerts.
+
+All endpoints work against the Fastify/SQLite server and are emulated in-browser by `src/services/staticServerSimulator.ts` for static deployments.
 
 ---
 

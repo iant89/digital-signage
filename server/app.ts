@@ -28,6 +28,20 @@ import {
   createStarterProject,
 } from '@packages/project-model';
 import { createId, sha256Hex } from '@packages/shared';
+import {
+  AlertRule,
+  AlertSeverity,
+  BackupArchive,
+  HealthSample,
+  ProofOfPlayGroupBy,
+  aggregateProofOfPlay,
+  backupSizeBytes,
+  buildBackupArchive,
+  evaluateFleetHealth,
+  normalizePlaybackEvents,
+  summarizeHealthHistory,
+  verifyBackupArchive,
+} from '@packages/fleet-operations';
 import type { WebSocket } from 'ws';
 
 export const SUPPORTED_COMMANDS = new Set([
@@ -169,6 +183,18 @@ export async function buildServerApp(
     const pendingDeployments = deployments.filter((d) => d.status === 'PENDING' || d.status === 'IN_PROGRESS').length;
     const failedCommands = commands.filter((c) => c.status === 'FAILED' || c.status === 'REJECTED').length;
     const storageBytes = packages.reduce((acc, p) => acc + Number(p.size_bytes || 0), 0);
+    const activeFleetAlerts = (
+      store.db.prepare("SELECT COUNT(*) as cnt FROM fleet_alerts WHERE state = 'ACTIVE'").get() as { cnt: number }
+    ).cnt;
+    const lastBackup = store.db
+      .prepare('SELECT created_at_utc FROM backups ORDER BY created_at_utc DESC LIMIT 1')
+      .get() as { created_at_utc: string } | undefined;
+    const todayStartIso = `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`;
+    const playsToday = (
+      store.db.prepare('SELECT COUNT(*) as cnt FROM playback_events WHERE started_at_utc >= ?').get(todayStartIso) as {
+        cnt: number;
+      }
+    ).cnt;
 
     return {
       serverTimeUtc: new Date().toISOString(),
@@ -183,6 +209,9 @@ export async function buildServerApp(
       pendingDeployments,
       failedCommands,
       storageBytes,
+      activeFleetAlerts: Number(activeFleetAlerts),
+      lastBackupAtUtc: lastBackup?.created_at_utc ?? null,
+      proofOfPlayToday: Number(playsToday),
       recentEvents,
     };
   });
@@ -1354,6 +1383,324 @@ export async function buildServerApp(
       sessions,
       recentCommands: commands,
     };
+  });
+
+  // ==========================================================================
+  // 9. Phase 15 — Fleet Operations: Proof-of-Play, Health Telemetry, Alerts,
+  //    Verified Backups & Retention (Spec Sections 20, 32, 33, 34)
+  // ==========================================================================
+
+  const MAX_TELEMETRY_BATCH = 1_000;
+
+  function validIso(value: unknown): string | undefined {
+    if (typeof value !== 'string' || !value.trim()) return undefined;
+    const ms = Date.parse(value);
+    return Number.isFinite(ms) ? new Date(ms).toISOString() : undefined;
+  }
+
+  /** Evaluate current fleet health and persist newly-raised (deduplicated) alerts. */
+  function refreshFleetHealth(nowMs = Date.now()) {
+    const telemetry = store.getFleetTelemetry();
+    const rules = store.listAlertRules();
+    const report = evaluateFleetHealth({ devices: telemetry, rules }, nowMs);
+    const createdAlerts = store.saveFleetAlerts(report.alerts);
+    return { report, createdAlerts };
+  }
+
+  function normalizeHealthSample(
+    raw: unknown,
+    nowMs: number
+  ): (HealthSample & { currentSceneId?: string; currentPackageId?: string }) | null {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const input = raw as Record<string, unknown>;
+    const deviceId = typeof input.deviceId === 'string' ? input.deviceId.trim() : '';
+    if (!deviceId || deviceId.length > 128) return null;
+    const numeric = (value: unknown, fallback: number) => {
+      const parsed = typeof value === 'string' ? Number(value) : value;
+      return typeof parsed === 'number' && Number.isFinite(parsed) ? parsed : fallback;
+    };
+    const recordedMs = validIso(input.recordedAtUtc) ? Date.parse(String(input.recordedAtUtc)) : nowMs;
+    const fingerprint = `${deviceId}|${recordedMs}|${numeric(input.driftMs, 0)}|${numeric(input.estimatedFps, 60)}`;
+    const sampleId =
+      typeof input.sampleId === 'string' && input.sampleId.trim()
+        ? input.sampleId.trim().slice(0, 128)
+        : `hs-${sha256Hex(fingerprint).slice(0, 24)}`;
+    return {
+      sampleId,
+      deviceId,
+      recordedAtUtc: new Date(Math.min(recordedMs, nowMs)).toISOString(),
+      playbackState: (typeof input.playbackState === 'string' ? input.playbackState : 'PLAYING').slice(0, 40),
+      status: (typeof input.status === 'string' ? input.status : 'ONLINE').slice(0, 40),
+      driftMs: numeric(input.driftMs, 0),
+      estimatedFps: numeric(input.estimatedFps, 60),
+      errorCount: Math.max(0, numeric(input.errorCount, 0)),
+      clockUncertaintyMs: Math.max(0, numeric(input.clockUncertaintyMs, 0)),
+      currentSceneId: typeof input.currentSceneId === 'string' ? input.currentSceneId.slice(0, 128) : undefined,
+      currentPackageId: typeof input.currentPackageId === 'string' ? input.currentPackageId.slice(0, 128) : undefined,
+    };
+  }
+
+  app.get('/api/v1/operations/summary', async (req, reply) => {
+    const auth = verifyAuthorized(req, reply, ['admin', 'operator']);
+    if (!auth.authorized) return;
+    const nowMs = Date.now();
+    const { report } = refreshFleetHealth(nowMs);
+    const todayStartIso = `${new Date(nowMs).toISOString().slice(0, 10)}T00:00:00.000Z`;
+    const proofOfPlayToday = aggregateProofOfPlay(store.getPlaybackEvents({ fromUtc: todayStartIso }), {
+      nowMs,
+      fromUtc: todayStartIso,
+      groupBy: 'scene',
+    });
+    return {
+      generatedAtUtc: new Date(nowMs).toISOString(),
+      health: report,
+      healthHistory: summarizeHealthHistory(store.getHealthSamples(), 24 * 3_600_000, nowMs),
+      alerts: store.listFleetAlerts(),
+      rules: store.listAlertRules(),
+      proofOfPlayToday,
+      backups: store.listBackups(),
+    };
+  });
+
+  app.get('/api/v1/operations/proof-of-play', async (req, reply) => {
+    const auth = verifyAuthorized(req, reply, ['admin', 'operator']);
+    if (!auth.authorized) return;
+    const query = (req.query || {}) as Record<string, string>;
+    const groupBy: ProofOfPlayGroupBy = (['scene', 'device-scene', 'device', 'day'] as string[]).includes(query.groupBy)
+      ? (query.groupBy as ProofOfPlayGroupBy)
+      : 'scene';
+    const fromUtc = validIso(query.fromUtc);
+    const toUtc = validIso(query.toUtc);
+    const nowMs = Date.now();
+    const events = store.getPlaybackEvents({
+      fromUtc,
+      toUtc,
+      deviceId: query.deviceId,
+      sceneId: query.sceneId,
+    });
+    return {
+      summary: aggregateProofOfPlay(events, { nowMs, fromUtc, toUtc, groupBy }),
+      eventCount: events.length,
+    };
+  });
+
+  app.post('/api/v1/operations/playback-events', async (req, reply) => {
+    const auth = verifyAuthorized(req, reply, ['admin', 'operator', 'device']);
+    if (!auth.authorized) return;
+    const body = (req.body || {}) as Record<string, unknown>;
+    const payload = Array.isArray(body) ? body : body.events;
+    if (!Array.isArray(payload)) {
+      return reply.code(400).send({ error: 'Expected an array of playback events (or { events: [...] }).' });
+    }
+    if (payload.length > MAX_TELEMETRY_BATCH) {
+      return reply.code(413).send({ error: `Batch exceeds ${MAX_TELEMETRY_BATCH} events.` });
+    }
+    const nowMs = Date.now();
+    const normalized = normalizePlaybackEvents(payload, { nowMs });
+    const result = store.insertPlaybackEvents(normalized.events);
+    store.recordEvent(normalized.events[0]?.deviceId ?? null, 'PROOF_OF_PLAY_INGESTED', {
+      accepted: result.accepted,
+      duplicates: result.duplicates,
+      rejected: normalized.rejected.length,
+      offlineBuffered: normalized.events.filter((e) => e.offlineRecorded).length,
+    });
+    broadcastWs('PROOF_OF_PLAY_UPDATED', { accepted: result.accepted, duplicates: result.duplicates });
+    return {
+      accepted: result.accepted,
+      duplicates: result.duplicates + normalized.duplicates,
+      rejected: normalized.rejected,
+      clamped: normalized.clamped,
+      total: payload.length,
+    };
+  });
+
+  app.post('/api/v1/operations/health-samples', async (req, reply) => {
+    const auth = verifyAuthorized(req, reply, ['admin', 'operator', 'device']);
+    if (!auth.authorized) return;
+    const body = (req.body || {}) as Record<string, unknown>;
+    const payload = Array.isArray(body)
+      ? body
+      : Array.isArray(body.samples)
+        ? body.samples
+        : [body];
+    if (payload.length > MAX_TELEMETRY_BATCH) {
+      return reply.code(413).send({ error: `Batch exceeds ${MAX_TELEMETRY_BATCH} samples.` });
+    }
+    const nowMs = Date.now();
+    const samples = payload
+      .map((raw) => normalizeHealthSample(raw, nowMs))
+      .filter((sample): sample is NonNullable<typeof sample> => sample !== null);
+    let accepted = 0;
+    let duplicates = 0;
+    let unknownDevices = 0;
+    const updateDevice = store.db.prepare(`
+      UPDATE devices SET
+        last_seen_at = ?, playback_state = ?, status = ?, drift_ms = ?, estimated_fps = ?,
+        current_scene_id = COALESCE(?, current_scene_id),
+        current_package_id = COALESCE(?, current_package_id)
+      WHERE id = ?
+    `);
+    for (const sample of samples) {
+      const exists = store.db.prepare('SELECT id FROM devices WHERE id = ?').get(sample.deviceId);
+      if (!exists) {
+        unknownDevices += 1;
+        continue;
+      }
+      if (store.insertHealthSample(sample)) accepted += 1;
+      else duplicates += 1;
+      updateDevice.run(
+        sample.recordedAtUtc,
+        sample.playbackState,
+        sample.status,
+        sample.driftMs,
+        sample.estimatedFps,
+        sample.currentSceneId ?? null,
+        sample.currentPackageId ?? null,
+        sample.deviceId
+      );
+    }
+    const { report, createdAlerts } = refreshFleetHealth(nowMs);
+    if (createdAlerts > 0) broadcastWs('FLEET_ALERTS_RAISED', { createdAlerts });
+    return {
+      accepted,
+      duplicates,
+      rejected: payload.length - samples.length,
+      unknownDevices,
+      createdAlerts,
+      health: report,
+    };
+  });
+
+  app.get('/api/v1/operations/health', async (req, reply) => {
+    const auth = verifyAuthorized(req, reply, ['admin', 'operator']);
+    if (!auth.authorized) return;
+    const nowMs = Date.now();
+    const { report } = refreshFleetHealth(nowMs);
+    const samples = store.getHealthSamples(2_000);
+    return {
+      health: report,
+      samples,
+      history: summarizeHealthHistory(samples, 24 * 3_600_000, nowMs),
+    };
+  });
+
+  app.get('/api/v1/operations/alerts', async (req, reply) => {
+    const auth = verifyAuthorized(req, reply, ['admin', 'operator']);
+    if (!auth.authorized) return;
+    const { report } = refreshFleetHealth();
+    return { alerts: store.listFleetAlerts(), health: report };
+  });
+
+  app.post('/api/v1/operations/alerts/:alertId/acknowledge', async (req, reply) => {
+    const auth = verifyAuthorized(req, reply, ['admin', 'operator']);
+    if (!auth.authorized) return;
+    const { alertId } = req.params as { alertId: string };
+    const existing = store.db.prepare('SELECT state FROM fleet_alerts WHERE id = ?').get(alertId) as
+      | { state: string }
+      | undefined;
+    if (!existing) return reply.code(404).send({ error: 'Alert not found.' });
+    const changed = store.acknowledgeFleetAlert(alertId, auth.actorId);
+    store.recordAudit(auth.actorId, 'FLEET_ALERT_ACKNOWLEDGED', 'alert', alertId, changed ? 'Acknowledged' : 'Already acknowledged');
+    if (changed) broadcastWs('FLEET_ALERT_ACKNOWLEDGED', { alertId, actorId: auth.actorId });
+    return { acknowledged: true, alreadyAcknowledged: !changed, alertId };
+  });
+
+  app.get('/api/v1/operations/alert-rules', async (req, reply) => {
+    const auth = verifyAuthorized(req, reply, ['admin', 'operator']);
+    if (!auth.authorized) return;
+    return { rules: store.listAlertRules() };
+  });
+
+  app.patch('/api/v1/operations/alert-rules/:ruleId', async (req, reply) => {
+    const auth = verifyAuthorized(req, reply, ['admin']);
+    if (!auth.authorized) return;
+    const { ruleId } = req.params as { ruleId: string };
+    const current = store.listAlertRules().find((rule) => rule.id === ruleId);
+    if (!current) return reply.code(404).send({ error: 'Alert rule not found.' });
+    const body = (req.body || {}) as Record<string, unknown>;
+    const threshold = body.threshold === undefined ? current.threshold : Number(body.threshold);
+    const cooldownMinutes = body.cooldownMinutes === undefined ? current.cooldownMinutes : Number(body.cooldownMinutes);
+    if (!Number.isFinite(threshold) || threshold <= 0 || threshold > 1e9) {
+      return reply.code(400).send({ error: 'threshold must be a positive number.' });
+    }
+    if (!Number.isFinite(cooldownMinutes) || cooldownMinutes < 1 || cooldownMinutes > 1440) {
+      return reply.code(400).send({ error: 'cooldownMinutes must be between 1 and 1440.' });
+    }
+    const severity =
+      body.severity === undefined
+        ? current.severity
+        : (String(body.severity).toUpperCase() as AlertSeverity);
+    if (!['INFO', 'WARNING', 'CRITICAL'].includes(severity)) {
+      return reply.code(400).send({ error: 'severity must be INFO, WARNING or CRITICAL.' });
+    }
+    const updated: AlertRule = {
+      ...current,
+      threshold,
+      cooldownMinutes,
+      severity,
+      enabled: body.enabled === undefined ? current.enabled : Boolean(body.enabled),
+      description:
+        typeof body.description === 'string' ? body.description.slice(0, 240) : current.description,
+    };
+    store.upsertAlertRule(updated);
+    store.recordAudit(auth.actorId, 'FLEET_ALERT_RULE_UPDATED', 'rule', ruleId, JSON.stringify(updated));
+    return { rule: updated };
+  });
+
+  app.get('/api/v1/operations/backups', async (req, reply) => {
+    const auth = verifyAuthorized(req, reply, ['admin', 'operator']);
+    if (!auth.authorized) return;
+    return { backups: store.listBackups() };
+  });
+
+  app.post('/api/v1/operations/backups', async (req, reply) => {
+    const auth = verifyAuthorized(req, reply, ['admin']);
+    if (!auth.authorized) return;
+    const body = (req.body || {}) as Record<string, unknown>;
+    const retentionDays = Math.max(1, Math.min(3_650, Number(body.retentionDays ?? 30) || 30));
+    const archive = buildBackupArchive(store.getBackupTables(), { createdBy: auth.actorId, retentionDays });
+    const sizeBytes = backupSizeBytes(archive);
+    store.insertBackup(archive, sizeBytes);
+    store.recordAudit(auth.actorId, 'FLEET_BACKUP_CREATED', 'backup', archive.manifest.backupId, archive.manifest.checksum);
+    broadcastWs('FLEET_BACKUP_CREATED', { backupId: archive.manifest.backupId, sizeBytes });
+    return { backup: archive.manifest, sizeBytes, created: true };
+  });
+
+  app.get('/api/v1/operations/backups/:backupId', async (req, reply) => {
+    const auth = verifyAuthorized(req, reply, ['admin', 'operator']);
+    if (!auth.authorized) return;
+    const { backupId } = req.params as { backupId: string };
+    const archive = store.getBackup(backupId);
+    if (!archive) return reply.code(404).send({ error: 'Backup not found.' });
+    return { archive, verification: verifyBackupArchive(archive) };
+  });
+
+  app.post('/api/v1/operations/backups/:backupId/restore', async (req, reply) => {
+    const auth = verifyAuthorized(req, reply, ['admin']);
+    if (!auth.authorized) return;
+    const { backupId } = req.params as { backupId: string };
+    const archive = store.getBackup(backupId);
+    if (!archive) return reply.code(404).send({ error: 'Backup not found.' });
+    const verification = verifyBackupArchive(archive);
+    if (!verification.valid) {
+      store.recordAudit(auth.actorId, 'FLEET_BACKUP_RESTORE_REJECTED', 'backup', backupId, verification.errors.join('; '));
+      return reply.code(400).send({ error: 'INTEGRITY_CHECK_FAILED', details: verification.errors });
+    }
+    const restoredRows = store.restoreBackupTables(archive as BackupArchive);
+    store.recordAudit(auth.actorId, 'FLEET_BACKUP_RESTORED', 'backup', backupId, `${restoredRows} operational rows`);
+    broadcastWs('FLEET_BACKUP_RESTORED', { backupId, restoredRows });
+    return { restored: true, restoredRows, backupId, checksum: archive.manifest.checksum };
+  });
+
+  app.post('/api/v1/operations/retention', async (req, reply) => {
+    const auth = verifyAuthorized(req, reply, ['admin']);
+    if (!auth.authorized) return;
+    const body = (req.body || {}) as Record<string, unknown>;
+    const maxAgeDays = Math.max(1, Math.min(3_650, Number(body.maxAgeDays ?? 30) || 30));
+    const maxRows = Math.max(10, Math.min(100_000, Number(body.maxRows ?? 5_000) || 5_000));
+    const pruned = store.pruneOperationalData({ maxAgeMs: maxAgeDays * 86_400_000, maxRows });
+    store.recordAudit(auth.actorId, 'FLEET_RETENTION_APPLIED', 'server', 'operations', JSON.stringify({ maxAgeDays, maxRows, pruned }));
+    return { maxAgeDays, maxRows, pruned };
   });
 
   return { app, store };

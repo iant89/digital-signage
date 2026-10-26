@@ -29,6 +29,13 @@ import {
   Camera,
   Smartphone,
   CheckCircle2,
+  Database,
+  Bell,
+  AlertTriangle,
+  BarChart3,
+  Trash2,
+  RotateCcw,
+  Download,
 } from 'lucide-react';
 import { useStudioStore } from '@/store/useStudioStore';
 import {
@@ -45,13 +52,100 @@ import {
 } from '@packages/playback-engine';
 import { SignageElementRenderer } from '@/components/shared/SignageElementRenderer';
 import { formatBytes, formatDurationMs } from '@packages/shared';
+import {
+  DEFAULT_ALERT_RULES,
+  DEMO_DEVICE_IDS,
+  aggregateProofOfPlay,
+  createDemoHealthSamples,
+  createDemoPlaybackEvents,
+  evaluateFleetHealth,
+  summarizeHealthHistory,
+  type AlertRule,
+  type DeviceTelemetry,
+  type FleetAlert,
+  type ProofOfPlayGroupBy,
+  type ProofOfPlaySummary,
+} from '@packages/fleet-operations';
 
 type NetworkTab =
   | 'sync-dashboard'
   | 'overview'
   | 'devices'
   | 'groups-packages'
-  | 'commands-audit';
+  | 'commands-audit'
+  | 'fleet-operations';
+
+type FleetRange = 'today' | 'week' | 'all';
+
+interface FleetDeviceHealth {
+  deviceId: string;
+  name: string;
+  state: string;
+  staleMs: number;
+  lastSeenAtUtc: string;
+  playbackState: string;
+  driftMs: number;
+  estimatedFps: number;
+  commandFailures: number;
+  reasons: string[];
+}
+
+interface FleetHistoryRow {
+  deviceId: string;
+  samples: number;
+  avgFps: number;
+  minFps: number;
+  avgDriftMs: number;
+  maxDriftMs: number;
+  availabilityPercent: number;
+  history: Array<{ recordedAtUtc: string; fps: number; driftMs: number }>;
+}
+
+interface FleetBackupRow {
+  id: string;
+  created_at_utc: string;
+  created_by: string;
+  size_bytes: number;
+  checksum: string;
+}
+
+interface FleetSummaryResponse {
+  generatedAtUtc: string;
+  health: {
+    generatedAtUtc: string;
+    devices: FleetDeviceHealth[];
+    totals: Record<string, number>;
+  };
+  healthHistory: FleetHistoryRow[];
+  alerts: FleetAlert[];
+  rules: AlertRule[];
+  proofOfPlayToday: ProofOfPlaySummary;
+  backups: FleetBackupRow[];
+}
+
+const FLEET_STATE_COLORS: Record<string, string> = {
+  HEALTHY: '#10b981',
+  DEGRADED: '#f59e0b',
+  CRITICAL: '#ef4444',
+  OFFLINE: '#64748b',
+};
+
+function FleetSparkline({ history }: { history: FleetHistoryRow }): React.ReactElement {
+  const values = history.history.slice(-24);
+  if (values.length < 2) return <span className="muted-line">No samples yet</span>;
+  const points = values
+    .map((sample, index) => {
+      const x = (index / (values.length - 1)) * 100;
+      const y = 38 - Math.max(0, Math.min(1, sample.fps / 60)) * 34;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
+  return (
+    <svg className="fleet-sparkline" viewBox="0 0 100 40" preserveAspectRatio="none" aria-label={`${history.deviceId} FPS history`} role="img">
+      <polyline points={points} fill="none" stroke="#38bdf8" strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
+    </svg>
+  );
+}
 
 interface ServerDevice {
   id: string;
@@ -112,6 +206,264 @@ export const NetworkManagementView: React.FC = () => {
     'Point mobile camera at the Signage Player Setup QR Code'
   );
   const qrVideoRef = useRef<HTMLVideoElement | null>(null);
+
+  // -------------------------------------------------------------------------
+  // Phase 15 — Fleet Operations state (live server data + offline demo fallback)
+  // -------------------------------------------------------------------------
+  const [fleetSummary, setFleetSummary] = useState<FleetSummaryResponse | null>(null);
+  const [fleetProof, setFleetProof] = useState<ProofOfPlaySummary | null>(null);
+  const [fleetRange, setFleetRange] = useState<FleetRange>('week');
+  const [fleetGroupBy, setFleetGroupBy] = useState<ProofOfPlayGroupBy>('scene');
+  const [fleetBusy, setFleetBusy] = useState<string | null>(null);
+  const [fleetMessage, setFleetMessage] = useState(
+    'Fleet telemetry, proof-of-play impressions, alerts and verified backups.'
+  );
+
+  const fleetRangeStartUtc = useMemo(() => {
+    if (fleetRange === 'all') return undefined;
+    if (fleetRange === 'today') return `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`;
+    return new Date(Date.now() - 7 * 86_400_000).toISOString();
+  }, [fleetRange]);
+
+  /** Deterministic demo used only when no API is reachable (e.g. headless tests). */
+  const offlineFleetDemo = useMemo<FleetSummaryResponse>(() => {
+    const nowMs = Date.now();
+    const devices: DeviceTelemetry[] = DEMO_DEVICE_IDS.map((id, index) => ({
+      deviceId: id,
+      name: `Apex Display ${String(index + 1).padStart(2, '0')}`,
+      lastSeenAtUtc: new Date(nowMs - (index === 5 ? 95_000 : 2_000)).toISOString(),
+      status: 'ONLINE',
+      playbackState: 'PLAYING',
+      driftMs: index === 5 ? 312 : (index - 2) * 2,
+      estimatedFps: 60 - index,
+      commandFailures: 0,
+    }));
+    const report = evaluateFleetHealth({ devices, rules: DEFAULT_ALERT_RULES }, nowMs);
+    const todayStartIso = `${new Date(nowMs).toISOString().slice(0, 10)}T00:00:00.000Z`;
+    return {
+      generatedAtUtc: new Date(nowMs).toISOString(),
+      health: {
+        generatedAtUtc: report.generatedAtUtc,
+        devices: report.devices,
+        totals: report.totals as unknown as Record<string, number>,
+      },
+      healthHistory: summarizeHealthHistory(createDemoHealthSamples(nowMs, DEMO_DEVICE_IDS, 12), 24 * 3_600_000, nowMs),
+      alerts: report.alerts,
+      rules: DEFAULT_ALERT_RULES.map((rule) => ({ ...rule })),
+      proofOfPlayToday: aggregateProofOfPlay(createDemoPlaybackEvents(nowMs, DEMO_DEVICE_IDS, 8), {
+        nowMs,
+        fromUtc: todayStartIso,
+        groupBy: 'scene',
+      }),
+      backups: [],
+    };
+  }, []);
+
+  const offlineProof = useMemo(
+    () =>
+      aggregateProofOfPlay(createDemoPlaybackEvents(Date.now(), DEMO_DEVICE_IDS, 8), {
+        fromUtc: fleetRangeStartUtc,
+        groupBy: fleetGroupBy,
+      }),
+    [fleetRangeStartUtc, fleetGroupBy]
+  );
+
+  const fleet = fleetSummary ?? offlineFleetDemo;
+  const proof = fleetProof ?? offlineProof;
+  const activeAlerts = fleet.alerts.filter((alert) => alert.state === 'ACTIVE');
+  const acknowledgedAlerts = fleet.alerts.length - activeAlerts.length;
+  const fleetTotals = fleet.health.totals ?? {};
+  const maxDailyDwellMs = Math.max(1, ...(proof.daily ?? []).map((day) => day.dwellMs));
+
+  const fetchFleetData = useCallback(async () => {
+    try {
+      const qs = new URLSearchParams({ groupBy: fleetGroupBy });
+      if (fleetRangeStartUtc) qs.set('fromUtc', fleetRangeStartUtc);
+      const [summaryRes, proofRes] = await Promise.all([
+        fetch('/api/v1/operations/summary'),
+        fetch(`/api/v1/operations/proof-of-play?${qs.toString()}`),
+      ]);
+      if (summaryRes.ok) setFleetSummary((await summaryRes.json()) as FleetSummaryResponse);
+      if (proofRes.ok) {
+        const data = (await proofRes.json()) as { summary: ProofOfPlaySummary };
+        setFleetProof(data.summary);
+      }
+    } catch {
+      // Keep the deterministic offline demo snapshot.
+    }
+  }, [fleetGroupBy, fleetRangeStartUtc]);
+
+  const runFleetAction = useCallback(
+    async (label: string, url: string, init: RequestInit, successMessage: string) => {
+      setFleetBusy(label);
+      try {
+        const response = await fetch(url, init);
+        const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+        if (!response.ok) {
+          const errorText = String(data.error ?? response.statusText ?? 'Request failed');
+          setFleetMessage(`${label} failed: ${errorText}`);
+          notify('error', `${label} failed: ${errorText}`);
+          return null;
+        }
+        setFleetMessage(successMessage);
+        notify('success', successMessage);
+        await fetchFleetData();
+        return data;
+      } catch {
+        const message = 'Offline demo mode — start the management server to persist fleet changes.';
+        setFleetMessage(message);
+        notify('info', message);
+        return null;
+      } finally {
+        setFleetBusy(null);
+      }
+    },
+    [fetchFleetData, notify]
+  );
+
+  const fleetJsonHeaders = { 'Content-Type': 'application/json' };
+
+  const handleFleetInject = (kind: 'offline' | 'stalled' | 'drift' | 'healthy') => {
+    const deviceId = fleet.health.devices[0]?.deviceId || 'player-01';
+    const sample = {
+      deviceId,
+      sampleId: `console-${kind}-${Date.now()}`,
+      playbackState: kind === 'stalled' ? 'STALLED' : 'PLAYING',
+      status: kind === 'offline' ? 'OFFLINE' : 'ONLINE',
+      driftMs: kind === 'drift' ? 780 : 2,
+      estimatedFps: kind === 'stalled' ? 8 : 60,
+      errorCount: kind === 'stalled' ? 3 : 0,
+      clockUncertaintyMs: 2.5,
+      currentSceneId: 'scene-welcome',
+      currentPackageId: 'pkg-apex-lobby-v1',
+    };
+    void runFleetAction(
+      'Inject telemetry',
+      '/api/v1/operations/health-samples',
+      { method: 'POST', headers: fleetJsonHeaders, body: JSON.stringify({ samples: [sample] }) },
+      `Injected ${kind} telemetry for ${deviceId}; alert rules re-evaluated.`
+    );
+  };
+
+  const handleFleetReportPlays = () => {
+    const nowMs = Date.now();
+    const deviceId = fleet.health.devices[0]?.deviceId || 'player-01';
+    const scenes = ['scene-welcome', 'scene-menu', 'scene-promotions', 'scene-wayfinding'];
+    const events = scenes.map((sceneId, index) => ({
+      eventId: `console-play-${nowMs}-${index}`,
+      deviceId,
+      sceneId,
+      packageId: 'pkg-apex-lobby-v1',
+      startedAtUtc: new Date(nowMs - (scenes.length - index) * 12_000).toISOString(),
+      durationMs: 10_000,
+      completionRatio: 1,
+      offlineRecorded: index === 0,
+    }));
+    void runFleetAction(
+      'Report plays',
+      '/api/v1/operations/playback-events',
+      { method: 'POST', headers: fleetJsonHeaders, body: JSON.stringify({ events }) },
+      `Reported ${events.length} proof-of-play events for ${deviceId}.`
+    );
+  };
+
+  const handleAcknowledgeAlert = (alertId: string) => {
+    void runFleetAction(
+      'Acknowledge alert',
+      `/api/v1/operations/alerts/${encodeURIComponent(alertId)}/acknowledge`,
+      { method: 'POST', headers: fleetJsonHeaders, body: JSON.stringify({}) },
+      `Alert ${alertId.slice(-8)} acknowledged.`
+    );
+  };
+
+  const handleToggleRule = (rule: AlertRule) => {
+    void runFleetAction(
+      'Update alert rule',
+      `/api/v1/operations/alert-rules/${encodeURIComponent(rule.id)}`,
+      { method: 'PATCH', headers: fleetJsonHeaders, body: JSON.stringify({ enabled: !rule.enabled }) },
+      `${rule.type} ${rule.enabled ? 'disabled' : 'enabled'}.`
+    );
+  };
+
+  const handleRuleThreshold = (rule: AlertRule, value: string) => {
+    const threshold = Number(value);
+    if (!Number.isFinite(threshold) || threshold <= 0 || threshold === rule.threshold) return;
+    void runFleetAction(
+      'Update alert threshold',
+      `/api/v1/operations/alert-rules/${encodeURIComponent(rule.id)}`,
+      { method: 'PATCH', headers: fleetJsonHeaders, body: JSON.stringify({ threshold }) },
+      `${rule.type} threshold set to ${threshold}.`
+    );
+  };
+
+  const handleCreateBackup = () => {
+    void runFleetAction(
+      'Create backup',
+      '/api/v1/operations/backups',
+      { method: 'POST', headers: fleetJsonHeaders, body: JSON.stringify({ retentionDays: 30 }) },
+      'SHA-256 verified operational backup created.'
+    );
+  };
+
+  const handleVerifyBackup = async (backupId: string) => {
+    setFleetBusy('Verify backup');
+    try {
+      const response = await fetch(`/api/v1/operations/backups/${encodeURIComponent(backupId)}`);
+      const data = (await response.json()) as {
+        verification?: { valid: boolean; errors: string[]; computedChecksum: string };
+      };
+      const verification = data.verification;
+      if (!verification) throw new Error('No verification result');
+      const message = verification.valid
+        ? `Backup integrity OK — manifest checksum ${verification.computedChecksum.slice(0, 16)}…`
+        : `Backup integrity FAILED — ${verification.errors.join('; ')}`;
+      setFleetMessage(message);
+      notify(verification.valid ? 'success' : 'error', message);
+    } catch {
+      const message = 'Offline demo mode — no backup archive to verify.';
+      setFleetMessage(message);
+      notify('info', message);
+    } finally {
+      setFleetBusy(null);
+    }
+  };
+
+  const handleRestoreBackup = (backupId: string) => {
+    void runFleetAction(
+      'Restore backup',
+      `/api/v1/operations/backups/${encodeURIComponent(backupId)}/restore`,
+      { method: 'POST', headers: fleetJsonHeaders, body: JSON.stringify({}) },
+      'Operational telemetry restored after checksum verification.'
+    );
+  };
+
+  const handleDownloadBackup = async (backupId: string) => {
+    try {
+      const response = await fetch(`/api/v1/operations/backups/${encodeURIComponent(backupId)}`);
+      const payload = await response.text();
+      const blob = new Blob([payload], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `${backupId}.json`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setFleetMessage(`Downloaded ${backupId}.json`);
+    } catch {
+      setFleetMessage('Backup download is unavailable in offline demo mode.');
+    }
+  };
+
+  const handleFleetRetention = () => {
+    void runFleetAction(
+      'Apply retention',
+      '/api/v1/operations/retention',
+      { method: 'POST', headers: fleetJsonHeaders, body: JSON.stringify({ maxAgeDays: 30, maxRows: 5000 }) },
+      'Retention policy applied to telemetry, events and audit log.'
+    );
+  };
 
   const fetchServerData = useCallback(async () => {
     try {
@@ -190,6 +542,12 @@ export const NetworkManagementView: React.FC = () => {
     }, 4000);
     return () => clearInterval(pollId);
   }, [fetchServerData, performClockSyncExchange]);
+
+  // Fleet Operations data is heavier than the 4-second overview poll, so it is
+  // refreshed on tab activation, on filter changes, and after each action.
+  useEffect(() => {
+    if (activeTab === 'fleet-operations') void fetchFleetData();
+  }, [activeTab, fetchFleetData]);
 
   // Connect to /ws real-time gateway using relative host
   useEffect(() => {
@@ -586,6 +944,14 @@ export const NetworkManagementView: React.FC = () => {
           onClick={() => setActiveTab('commands-audit')}
         >
           <Terminal size={15} /> Remote Commands & Security Audit Log
+        </button>
+        <button
+          className={`subnav-btn ${activeTab === 'fleet-operations' ? 'active' : ''}`}
+          onClick={() => setActiveTab('fleet-operations')}
+          aria-label="Fleet Operations & Proof-of-Play"
+        >
+          <Activity size={15} /> Fleet Operations
+          {activeAlerts.length > 0 && <span className="fleet-nav-badge">{activeAlerts.length}</span>}
         </button>
       </div>
 
@@ -1171,6 +1537,414 @@ export const NetworkManagementView: React.FC = () => {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 6: FLEET OPERATIONS — Proof-of-Play, Health, Alerts, Backups */}
+        {activeTab === 'fleet-operations' && (
+          <div className="fleet-ops-container">
+            <div className="fleet-ops-banner">
+              <div>
+                <div className="fleet-ops-title">
+                  <Activity size={16} color="#38bdf8" />
+                  <strong>FLEET OPERATIONS &amp; PROOF-OF-PLAY</strong>
+                  <span className="entry-pill">PHASE 15</span>
+                </div>
+                <p className="fleet-ops-subtitle">
+                  De-duplicated playback impressions, heartbeat health grading, deduplicated alert
+                  rules, SHA-256 verified backups and audit retention — live from{' '}
+                  <code>/api/v1/operations/*</code> with an offline deterministic demo fallback.
+                </p>
+              </div>
+              <div className="inline-row">
+                <button
+                  type="button"
+                  className="btn-xs"
+                  disabled={fleetBusy !== null}
+                  onClick={() => {
+                    void fetchFleetData();
+                    setFleetMessage('Fleet telemetry refreshed.');
+                  }}
+                >
+                  <RefreshCw size={13} /> Refresh Telemetry
+                </button>
+                <span className="muted-line">{fleet.generatedAtUtc}</span>
+              </div>
+            </div>
+
+            <div className="fleet-kpi-grid">
+              <div className="pm-kpi-box">
+                <span>Healthy Displays</span>
+                <strong style={{ color: '#10b981' }}>{fleetTotals.healthy ?? 0}</strong>
+              </div>
+              <div className="pm-kpi-box">
+                <span>Degraded / Critical</span>
+                <strong style={{ color: '#f59e0b' }}>
+                  {fleetTotals.degraded ?? 0} / {fleetTotals.critical ?? 0}
+                </strong>
+              </div>
+              <div className="pm-kpi-box">
+                <span>Offline (Cache Mode)</span>
+                <strong style={{ color: '#94a3b8' }}>{fleetTotals.offline ?? 0}</strong>
+              </div>
+              <div className="pm-kpi-box">
+                <span>Active Fleet Alerts</span>
+                <strong style={{ color: activeAlerts.length ? '#ef4444' : '#10b981' }}>
+                  {activeAlerts.length}
+                </strong>
+              </div>
+              <div className="pm-kpi-box">
+                <span>Plays in Range</span>
+                <strong style={{ color: '#38bdf8' }}>{proof.totals.plays}</strong>
+              </div>
+              <div className="pm-kpi-box">
+                <span>Display Time / Uptime</span>
+                <strong>
+                  {formatDurationMs(proof.totals.coverageMs)} /{' '}
+                  {(fleetTotals.uptimePercent ?? 100).toFixed(1)}%
+                </strong>
+              </div>
+            </div>
+
+            <div className="fleet-ops-grid">
+              {/* Proof-of-Play */}
+              <section className="pm-card fleet-card">
+                <div className="pm-card-header">
+                  <BarChart3 size={17} color="#38bdf8" />
+                  <h3>Proof-of-Play Impressions</h3>
+                </div>
+                <div className="fleet-toolbar">
+                  <label>
+                    Range
+                    <select
+                      className="inspector-input"
+                      aria-label="Proof-of-Play Range"
+                      value={fleetRange}
+                      onChange={(e) => setFleetRange(e.target.value as FleetRange)}
+                    >
+                      <option value="today">Today (UTC)</option>
+                      <option value="week">Last 7 days</option>
+                      <option value="all">All history</option>
+                    </select>
+                  </label>
+                  <label>
+                    Group By
+                    <select
+                      className="inspector-input"
+                      aria-label="Proof-of-Play Grouping"
+                      value={fleetGroupBy}
+                      onChange={(e) => setFleetGroupBy(e.target.value as ProofOfPlayGroupBy)}
+                    >
+                      <option value="scene">Scene</option>
+                      <option value="device-scene">Device + Scene</option>
+                      <option value="device">Device</option>
+                      <option value="day">UTC Day</option>
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    className="btn-xs primary-accent"
+                    disabled={fleetBusy !== null}
+                    onClick={handleFleetReportPlays}
+                  >
+                    <Plus size={13} /> Report 4 Plays
+                  </button>
+                </div>
+
+                <div className="fleet-totals-strip">
+                  <span><strong>{proof.totals.plays}</strong> plays</span>
+                  <span><strong>{formatDurationMs(proof.totals.dwellMs)}</strong> dwell</span>
+                  <span><strong>{formatDurationMs(proof.totals.coverageMs)}</strong> de-duplicated display time</span>
+                  <span><strong>{proof.totals.uniqueScenes}</strong> scenes / <strong>{proof.totals.uniqueDevices}</strong> devices</span>
+                  <span><strong>{(proof.totals.avgCompletionRatio * 100).toFixed(1)}%</strong> avg completion</span>
+                  <span><strong>{proof.totals.offlineEvents}</strong> offline-buffered</span>
+                </div>
+
+                <div className="fleet-table-wrap">
+                  <table className="fleet-table">
+                    <thead>
+                      <tr>
+                        <th>{fleetGroupBy === 'day' ? 'UTC Day' : 'Scene / Device'}</th>
+                        <th>Plays</th>
+                        <th>Dwell</th>
+                        <th>Unique</th>
+                        <th>Completion</th>
+                        <th>Last Played (UTC)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {proof.rows.slice(0, 12).map((row) => (
+                        <tr key={row.key}>
+                          <td><code>{row.key}</code></td>
+                          <td>{row.plays}</td>
+                          <td>{formatDurationMs(row.dwellMs)}</td>
+                          <td>{formatDurationMs(row.coverageMs)}</td>
+                          <td>{(row.avgCompletionRatio * 100).toFixed(0)}%</td>
+                          <td className="muted-line">{row.lastPlayedAtUtc.slice(11, 19)}</td>
+                        </tr>
+                      ))}
+                      {proof.rows.length === 0 && (
+                        <tr><td colSpan={6} className="muted-line">No playback reports in this range.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="fleet-daily-bars">
+                  <div className="palette-title">Daily Display Time (UTC)</div>
+                  {proof.daily.slice(-7).map((day) => (
+                    <div className="fleet-daily-row" key={day.dayUtc}>
+                      <span>{day.dayUtc}</span>
+                      <div className="fleet-daily-track">
+                        <div style={{ width: `${Math.max(2, (day.dwellMs / maxDailyDwellMs) * 100)}%` }} />
+                      </div>
+                      <span>{formatDurationMs(day.dwellMs)}</span>
+                    </div>
+                  ))}
+                  {proof.daily.length === 0 && <div className="muted-line">No daily telemetry yet.</div>}
+                </div>
+              </section>
+
+              {/* Fleet health */}
+              <section className="pm-card fleet-card">
+                <div className="pm-card-header">
+                  <Activity size={17} color="#10b981" />
+                  <h3>Fleet Health &amp; Telemetry</h3>
+                </div>
+                <div className="fleet-health-summary">
+                  Avg {fleetTotals.averageFps?.toFixed(1) ?? '0.0'} FPS · Max |drift|{' '}
+                  {fleetTotals.maxDriftMs?.toFixed(0) ?? 0} ms ·{' '}
+                  {fleetTotals.uptimePercent?.toFixed(1) ?? '100.0'}% reachable
+                </div>
+                <div className="fleet-device-list">
+                  {fleet.health.devices.map((device) => (
+                    <div className="fleet-device-row" key={device.deviceId}>
+                      <span
+                        className="fleet-state-dot"
+                        style={{ background: FLEET_STATE_COLORS[device.state] ?? '#64748b' }}
+                        title={device.state}
+                      />
+                      <div className="fleet-device-main">
+                        <strong>{device.name}</strong>
+                        <span className="muted-line">
+                          {device.deviceId} · {device.playbackState} · {device.estimatedFps.toFixed(0)} FPS ·{' '}
+                          {device.driftMs.toFixed(0)} ms drift · {(device.staleMs / 1000).toFixed(0)}s since heartbeat
+                        </span>
+                        {device.reasons.length > 0 && (
+                          <span className="fleet-reason-line">{device.reasons.slice(0, 3).join(' · ')}</span>
+                        )}
+                      </div>
+                      <span
+                        className="fleet-state-pill"
+                        style={{ color: FLEET_STATE_COLORS[device.state] ?? '#64748b' }}
+                      >
+                        {device.state}
+                      </span>
+                    </div>
+                  ))}
+                  {fleet.health.devices.length === 0 && (
+                    <div className="muted-line">No registered displays.</div>
+                  )}
+                </div>
+                <div className="fleet-history">
+                  <div className="palette-title">24-Hour FPS History (latest samples)</div>
+                  {fleet.healthHistory.slice(0, 3).map((row) => (
+                    <div className="fleet-history-row" key={row.deviceId}>
+                      <span>{row.deviceId}</span>
+                      <FleetSparkline history={row} />
+                      <span className="muted-line">
+                        {row.samples} samples · {row.availabilityPercent.toFixed(0)}% playing
+                      </span>
+                    </div>
+                  ))}
+                  {fleet.healthHistory.length === 0 && <div className="muted-line">No health samples yet.</div>}
+                </div>
+              </section>
+
+              {/* Alerts & rules */}
+              <section className="pm-card fleet-card">
+                <div className="pm-card-header">
+                  <Bell size={17} color="#f59e0b" />
+                  <h3>Alert Rules &amp; Active Alerts</h3>
+                </div>
+                <div className="fleet-rules-list">
+                  {fleet.rules.map((rule) => (
+                    <div className="fleet-rule-row" key={rule.id}>
+                      <button
+                        type="button"
+                        className={`fleet-rule-toggle ${rule.enabled ? 'on' : ''}`}
+                        aria-label={`${rule.enabled ? 'Disable' : 'Enable'} ${rule.type}`}
+                        disabled={fleetBusy !== null}
+                        onClick={() => handleToggleRule(rule)}
+                      >
+                        {rule.enabled ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
+                      </button>
+                      <div className="fleet-rule-main">
+                        <strong>{rule.type}</strong>
+                        <span className="muted-line">{rule.description}</span>
+                      </div>
+                      <label className="fleet-rule-threshold">
+                        <input
+                          key={`${rule.id}-${rule.threshold}`}
+                          type="number"
+                          className="inspector-input"
+                          min={1}
+                          defaultValue={rule.threshold}
+                          aria-label={`${rule.type} threshold`}
+                          onBlur={(e) => handleRuleThreshold(rule, e.target.value)}
+                        />
+                        <span>{rule.severity}</span>
+                      </label>
+                    </div>
+                  ))}
+                  {fleet.rules.length === 0 && <div className="muted-line">No alert rules configured.</div>}
+                </div>
+
+                <div className="fleet-alerts-list">
+                  <div className="palette-title">
+                    Active Alerts ({activeAlerts.length}) · Acknowledged ({acknowledgedAlerts})
+                  </div>
+                  {activeAlerts.slice(0, 8).map((alert) => (
+                    <div className="fleet-alert-row" key={alert.id}>
+                      <span
+                        className="fleet-severity-dot"
+                        style={{ background: alert.severity === 'CRITICAL' ? '#ef4444' : '#f59e0b' }}
+                      />
+                      <div className="fleet-alert-main">
+                        <strong>{alert.ruleType}</strong>
+                        <span className="muted-line">{alert.message}</span>
+                        <span className="muted-line">{alert.triggeredAtUtc}</span>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn-xs"
+                        disabled={fleetBusy !== null}
+                        onClick={() => handleAcknowledgeAlert(alert.id)}
+                      >
+                        Ack
+                      </button>
+                    </div>
+                  ))}
+                  {activeAlerts.length === 0 && (
+                    <div className="fleet-empty-ok">
+                      <CheckCircle2 size={15} /> No active fleet alerts — all rules passing.
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              {/* Backups & retention */}
+              <section className="pm-card fleet-card">
+                <div className="pm-card-header">
+                  <Database size={17} color="#a78bfa" />
+                  <h3>Verified Backups &amp; Retention</h3>
+                </div>
+                <div className="fleet-toolbar">
+                  <button
+                    type="button"
+                    className="btn-xs primary-accent"
+                    disabled={fleetBusy !== null}
+                    onClick={handleCreateBackup}
+                  >
+                    <Database size={13} /> Create Backup
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-xs"
+                    disabled={fleetBusy !== null}
+                    onClick={handleFleetRetention}
+                  >
+                    <Trash2 size={13} /> Apply 30-Day Retention
+                  </button>
+                  <span className="muted-line">30-day / 5,000-row policy</span>
+                </div>
+                <div className="fleet-table-wrap">
+                  <table className="fleet-table">
+                    <thead>
+                      <tr>
+                        <th>Created (UTC)</th>
+                        <th>Size</th>
+                        <th>SHA-256 Manifest</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {fleet.backups.map((backup) => (
+                        <tr key={backup.id}>
+                          <td>{backup.created_at_utc.replace('T', ' ').slice(0, 19)}</td>
+                          <td>{formatBytes(Number(backup.size_bytes))}</td>
+                          <td><code>{backup.checksum.slice(0, 16)}…</code></td>
+                          <td>
+                            <div className="inline-row">
+                              <button
+                                type="button"
+                                className="btn-xs"
+                                disabled={fleetBusy !== null}
+                                onClick={() => void handleVerifyBackup(backup.id)}
+                                title="Verify SHA-256 manifest"
+                              >
+                                <ShieldCheck size={12} /> Verify
+                              </button>
+                              <button
+                                type="button"
+                                className="btn-xs"
+                                disabled={fleetBusy !== null}
+                                onClick={() => handleRestoreBackup(backup.id)}
+                                title="Restore operational telemetry"
+                              >
+                                <RotateCcw size={12} /> Restore
+                              </button>
+                              <button
+                                type="button"
+                                className="btn-xs"
+                                onClick={() => void handleDownloadBackup(backup.id)}
+                                title="Download backup JSON"
+                              >
+                                <Download size={12} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                      {fleet.backups.length === 0 && (
+                        <tr><td colSpan={4} className="muted-line">No backups yet — create the first verified snapshot.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="fleet-checksum-note">
+                  Backups exclude credential tables, redact secret-like columns, and are restored only
+                  after every table checksum and the manifest checksum are recomputed and matched.
+                </div>
+              </section>
+            </div>
+
+            <div className="fleet-ops-console">
+              <div>
+                <strong>Fleet Simulation &amp; Diagnostics</strong>
+                <p className="muted-line">
+                  Inject synthetic heartbeat anomalies or replay offline-buffered playback reports to
+                  exercise alert rules, drift grading and de-duplication end to end.
+                </p>
+              </div>
+              <div className="fleet-sim-buttons">
+                <button type="button" className="btn-xs" disabled={fleetBusy !== null} onClick={() => handleFleetInject('offline')}>
+                  <WifiOff size={13} /> Simulate Offline Device
+                </button>
+                <button type="button" className="btn-xs" disabled={fleetBusy !== null} onClick={() => handleFleetInject('stalled')}>
+                  <AlertTriangle size={13} /> Simulate Stalled Playback
+                </button>
+                <button type="button" className="btn-xs" disabled={fleetBusy !== null} onClick={() => handleFleetInject('drift')}>
+                  <Clock size={13} /> Inject +780 ms Drift
+                </button>
+                <button type="button" className="btn-xs" disabled={fleetBusy !== null} onClick={() => handleFleetInject('healthy')}>
+                  <CheckCircle2 size={13} /> Restore Healthy Telemetry
+                </button>
+              </div>
+              <div className={`fleet-message ${fleetBusy ? 'busy' : ''}`} role="status" aria-live="polite">
+                {fleetBusy ? `${fleetBusy}…` : fleetMessage}
               </div>
             </div>
           </div>

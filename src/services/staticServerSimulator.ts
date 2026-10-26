@@ -10,6 +10,28 @@
 // ============================================================================
 
 import { evaluateDriftCorrection } from '@packages/playback-engine';
+import {
+  AlertRule,
+  BackupArchive,
+  DEFAULT_ALERT_RULES,
+  DeviceTelemetry,
+  FleetAlert,
+  HealthSample,
+  PlaybackEvent,
+  ProofOfPlayGroupBy,
+  BackupTableSnapshot,
+  aggregateProofOfPlay,
+  applyRetention,
+  backupSizeBytes,
+  buildBackupArchive,
+  createDemoHealthSamples,
+  createDemoPlaybackEvents,
+  evaluateFleetHealth,
+  normalizePlaybackEvents,
+  playbackEventToWire,
+  summarizeHealthHistory,
+  verifyBackupArchive,
+} from '@packages/fleet-operations';
 
 interface SimulatedStore {
   devices: Array<Record<string, unknown>>;
@@ -21,13 +43,20 @@ interface SimulatedStore {
   commands: Array<Record<string, unknown>>;
   auditLog: Array<Record<string, unknown>>;
   events: Array<Record<string, unknown>>;
+  // Phase 15 fleet operations
+  playbackEvents: PlaybackEvent[];
+  healthSamples: HealthSample[];
+  alertRules: AlertRule[];
+  fleetAlerts: FleetAlert[];
+  backups: BackupArchive[];
 }
 
 function createInitialStaticStore(): SimulatedStore {
-  const nowIso = new Date().toISOString();
-  const sessionStartIso = new Date(Date.now() - 12_000).toISOString();
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const sessionStartIso = new Date(nowMs - 12_000).toISOString();
 
-  return {
+  const initial: SimulatedStore = {
     devices: [
       {
         id: 'player-01',
@@ -125,11 +154,13 @@ function createInitialStaticStore(): SimulatedStore {
         player_version: '1.0.0',
         current_package_id: 'pkg-apex-lobby-v1',
         current_scene_id: 'scene-welcome',
-        estimated_fps: 60,
+        estimated_fps: 58,
         clock_offset_ms: -0.7,
         clock_uncertainty_ms: 2.2,
-        drift_ms: -2,
-        last_seen_at: nowIso,
+        drift_ms: 312,
+        // Slightly stale heartbeat so the Fleet Operations demo shows a real
+        // deterministic HEARTBEAT_STALE + CLOCK_DRIFT alert on static hosting.
+        last_seen_at: new Date(nowMs - 95_000).toISOString(),
       },
     ],
     enrollmentCodes: [
@@ -232,7 +263,81 @@ function createInitialStaticStore(): SimulatedStore {
         created_at: nowIso,
       },
     ],
+    playbackEvents: [],
+    healthSamples: [],
+    alertRules: [],
+    fleetAlerts: [],
+    backups: [],
   };
+
+  const deviceIds = initial.devices.map((d) => String(d.id));
+  initial.playbackEvents = normalizePlaybackEvents(createDemoPlaybackEvents(nowMs, deviceIds, 8), { nowMs })
+    .events.map(playbackEventToWire);
+  initial.healthSamples = createDemoHealthSamples(nowMs, deviceIds, 12);
+  initial.alertRules = DEFAULT_ALERT_RULES.map((rule) => ({ ...rule }));
+  const seedReport = evaluateFleetHealth(
+    { devices: simulatedTelemetry(initial), rules: initial.alertRules },
+    nowMs
+  );
+  initial.fleetAlerts = seedReport.alerts;
+  return initial;
+}
+
+function simulatedTelemetry(store: SimulatedStore): DeviceTelemetry[] {
+  const failureCounts = new Map<string, number>();
+  for (const cmd of store.commands) {
+    if (cmd.status === 'FAILED' || cmd.status === 'REJECTED') {
+      const id = String(cmd.target_device_id || '');
+      failureCounts.set(id, (failureCounts.get(id) ?? 0) + 1);
+    }
+  }
+  return store.devices.map((device) => ({
+    deviceId: String(device.id),
+    name: String(device.name ?? device.id),
+    lastSeenAtUtc: String(device.last_seen_at ?? ''),
+    status: String(device.status ?? 'ONLINE'),
+    playbackState: String(device.playback_state ?? 'PLAYING'),
+    driftMs: Number(device.drift_ms ?? 0),
+    estimatedFps: Number(device.estimated_fps ?? 60),
+    commandFailures: failureCounts.get(String(device.id)) ?? 0,
+    currentSceneId: device.current_scene_id ? String(device.current_scene_id) : undefined,
+    currentPackageId: device.current_package_id ? String(device.current_package_id) : undefined,
+  }));
+}
+
+function simulatedFleetReport(store: SimulatedStore, nowMs = Date.now()) {
+  const report = evaluateFleetHealth({ devices: simulatedTelemetry(store), rules: store.alertRules }, nowMs);
+  for (const alert of report.alerts) {
+    if (!store.fleetAlerts.some((existing) => existing.id === alert.id)) store.fleetAlerts.unshift(alert);
+  }
+  store.fleetAlerts.sort((a, b) => b.triggeredAtUtc.localeCompare(a.triggeredAtUtc));
+  return report;
+}
+
+function simulatedBackupTables(store: SimulatedStore): BackupTableSnapshot[] {
+  const asRows = (items: Array<Record<string, unknown>>) => items.map((item) => ({ ...item }));
+  return [
+    { name: 'devices', rows: asRows(store.devices) },
+    { name: 'groups', rows: asRows(store.groups) },
+    { name: 'deployments', rows: asRows(store.deployments) },
+    { name: 'commands', rows: asRows(store.commands) },
+    { name: 'audit_log', rows: asRows(store.auditLog) },
+    { name: 'events', rows: asRows(store.events) },
+    { name: 'playback_events', rows: asRows(store.playbackEvents as unknown as Array<Record<string, unknown>>) },
+    { name: 'health_samples', rows: asRows(store.healthSamples as unknown as Array<Record<string, unknown>>) },
+    { name: 'alert_rules', rows: asRows(store.alertRules as unknown as Array<Record<string, unknown>>) },
+    { name: 'fleet_alerts', rows: asRows(store.fleetAlerts as unknown as Array<Record<string, unknown>>) },
+  ];
+}
+
+function simulatedBackupList(store: SimulatedStore) {
+  return store.backups.map((archive) => ({
+    id: archive.manifest.backupId,
+    created_at_utc: archive.manifest.createdAtUtc,
+    created_by: archive.manifest.createdBy,
+    size_bytes: backupSizeBytes(archive),
+    checksum: archive.manifest.checksum,
+  }));
 }
 
 let staticStore: SimulatedStore | null = null;
@@ -257,6 +362,9 @@ async function handleSimulatedApiRequest(urlPath: string, init?: RequestInit): P
   const bodyText = typeof init?.body === 'string' ? init.body : '';
   const body = bodyText ? JSON.parse(bodyText) : {};
   const nowIso = new Date().toISOString();
+  const nowMs = Date.parse(nowIso);
+  const [pathOnly, queryString = ''] = urlPath.split('?');
+  const query = new URLSearchParams(queryString);
 
   if (urlPath === '/api/v1/server/overview' && method === 'GET') {
     const online = store.devices.filter((d) => d.status === 'ONLINE').length;
@@ -478,6 +586,250 @@ async function handleSimulatedApiRequest(urlPath: string, init?: RequestInit): P
 
   if (urlPath === '/api/v1/audit-log' && method === 'GET') {
     return jsonResponse({ auditLog: store.auditLog });
+  }
+
+  // --------------------------------------------------------------------------
+  // Phase 15: Fleet Operations fallback (proof-of-play, health, alerts, backups)
+  // --------------------------------------------------------------------------
+
+  if (pathOnly === '/api/v1/operations/summary' && method === 'GET') {
+    const health = simulatedFleetReport(store, nowMs);
+    const todayStartIso = `${nowIso.slice(0, 10)}T00:00:00.000Z`;
+    const proofOfPlayToday = aggregateProofOfPlay(store.playbackEvents, {
+      nowMs,
+      fromUtc: todayStartIso,
+      groupBy: 'scene',
+    });
+    return jsonResponse({
+      generatedAtUtc: nowIso,
+      health,
+      healthHistory: summarizeHealthHistory(store.healthSamples, 24 * 3_600_000, nowMs),
+      alerts: store.fleetAlerts,
+      rules: store.alertRules,
+      proofOfPlayToday,
+      backups: simulatedBackupList(store),
+    });
+  }
+
+  if (pathOnly === '/api/v1/operations/proof-of-play' && method === 'GET') {
+    const requested = query.get('groupBy') ?? 'scene';
+    const groupBy: ProofOfPlayGroupBy = (['scene', 'device-scene', 'device', 'day'] as string[]).includes(requested)
+      ? (requested as ProofOfPlayGroupBy)
+      : 'scene';
+    const summary = aggregateProofOfPlay(store.playbackEvents, {
+      nowMs,
+      fromUtc: query.get('fromUtc') ?? undefined,
+      toUtc: query.get('toUtc') ?? undefined,
+      groupBy,
+    });
+    return jsonResponse({ summary, eventCount: store.playbackEvents.length });
+  }
+
+  if (pathOnly === '/api/v1/operations/playback-events' && method === 'POST') {
+    const payload = Array.isArray(body) ? body : body.events;
+    if (!Array.isArray(payload)) return jsonResponse({ error: 'Expected an array of playback events.' }, 400);
+    const normalized = normalizePlaybackEvents(payload, { nowMs });
+    const known = new Set(store.playbackEvents.map((event) => event.eventId));
+    let accepted = 0;
+    let duplicates = normalized.duplicates;
+    for (const event of normalized.events) {
+      if (known.has(event.eventId)) {
+        duplicates += 1;
+        continue;
+      }
+      known.add(event.eventId);
+      store.playbackEvents.push(playbackEventToWire(event));
+      accepted += 1;
+    }
+    store.events.unshift({
+      id: `evt-pop-${nowMs}`,
+      device_id: normalized.events[0]?.deviceId ?? null,
+      event_type: 'PROOF_OF_PLAY_INGESTED',
+      severity: 'INFO',
+      created_at: nowIso,
+    });
+    return jsonResponse({
+      accepted,
+      duplicates,
+      rejected: normalized.rejected,
+      clamped: normalized.clamped,
+      total: payload.length,
+    });
+  }
+
+  if (pathOnly === '/api/v1/operations/health-samples' && method === 'POST') {
+    const payload: unknown[] = Array.isArray(body)
+      ? body
+      : Array.isArray(body.samples)
+        ? body.samples
+        : [body];
+    let accepted = 0;
+    let duplicates = 0;
+    let invalid = 0;
+    let unknownDevices = 0;
+    const alertCountBefore = store.fleetAlerts.length;
+    for (const raw of payload) {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        invalid += 1;
+        continue;
+      }
+      const input = raw as Record<string, unknown>;
+      const deviceId = typeof input.deviceId === 'string' ? input.deviceId.trim() : '';
+      const device = store.devices.find((d) => String(d.id) === deviceId);
+      if (!device) {
+        unknownDevices += 1;
+        continue;
+      }
+      const num = (value: unknown, fallback: number) => {
+        const parsed = typeof value === 'number' ? value : Number(value);
+        return Number.isFinite(parsed) ? parsed : fallback;
+      };
+      const sample: HealthSample = {
+        sampleId: typeof input.sampleId === 'string' && input.sampleId ? input.sampleId : `sim-hs-${nowMs}-${accepted}`,
+        deviceId,
+        recordedAtUtc: nowIso,
+        playbackState: typeof input.playbackState === 'string' ? input.playbackState : 'PLAYING',
+        status: typeof input.status === 'string' ? input.status : 'ONLINE',
+        driftMs: num(input.driftMs, 0),
+        estimatedFps: num(input.estimatedFps, 60),
+        errorCount: num(input.errorCount, 0),
+        clockUncertaintyMs: num(input.clockUncertaintyMs, 0),
+        currentSceneId: typeof input.currentSceneId === 'string' ? input.currentSceneId : undefined,
+        currentPackageId: typeof input.currentPackageId === 'string' ? input.currentPackageId : undefined,
+      };
+      if (store.healthSamples.some((s) => s.sampleId === sample.sampleId)) duplicates += 1;
+      else {
+        store.healthSamples.push(sample);
+        accepted += 1;
+      }
+      device.last_seen_at = sample.recordedAtUtc;
+      device.playback_state = sample.playbackState;
+      device.status = sample.status;
+      device.drift_ms = sample.driftMs;
+      device.estimated_fps = sample.estimatedFps;
+      if (sample.currentSceneId) device.current_scene_id = sample.currentSceneId;
+      if (sample.currentPackageId) device.current_package_id = sample.currentPackageId;
+    }
+    const health = simulatedFleetReport(store, nowMs);
+    return jsonResponse({
+      accepted,
+      duplicates,
+      rejected: invalid,
+      unknownDevices,
+      createdAlerts: Math.max(0, store.fleetAlerts.length - alertCountBefore),
+      health,
+    });
+  }
+
+  if (pathOnly === '/api/v1/operations/health' && method === 'GET') {
+    const health = simulatedFleetReport(store, nowMs);
+    return jsonResponse({
+      health,
+      samples: store.healthSamples,
+      history: summarizeHealthHistory(store.healthSamples, 24 * 3_600_000, nowMs),
+    });
+  }
+
+  if (pathOnly === '/api/v1/operations/alerts' && method === 'GET') {
+    const health = simulatedFleetReport(store, nowMs);
+    return jsonResponse({ alerts: store.fleetAlerts, health });
+  }
+
+  const acknowledgeMatch = pathOnly.match(/^\/api\/v1\/operations\/alerts\/([^/]+)\/acknowledge$/);
+  if (acknowledgeMatch && method === 'POST') {
+    const alert = store.fleetAlerts.find((a) => a.id === decodeURIComponent(acknowledgeMatch[1]));
+    if (!alert) return jsonResponse({ error: 'Alert not found.' }, 404);
+    const changed = alert.state === 'ACTIVE';
+    alert.state = 'ACKNOWLEDGED';
+    alert.acknowledgedAtUtc = nowIso;
+    alert.acknowledgedBy = 'admin';
+    return jsonResponse({ acknowledged: true, alreadyAcknowledged: !changed, alertId: alert.id });
+  }
+
+  if (pathOnly === '/api/v1/operations/alert-rules' && method === 'GET') {
+    return jsonResponse({ rules: store.alertRules });
+  }
+
+  const ruleMatch = pathOnly.match(/^\/api\/v1\/operations\/alert-rules\/([^/]+)$/);
+  if (ruleMatch && method === 'PATCH') {
+    const rule = store.alertRules.find((r) => r.id === decodeURIComponent(ruleMatch[1]));
+    if (!rule) return jsonResponse({ error: 'Alert rule not found.' }, 404);
+    if (body.threshold !== undefined) rule.threshold = Number(body.threshold) || rule.threshold;
+    if (body.cooldownMinutes !== undefined) rule.cooldownMinutes = Number(body.cooldownMinutes) || rule.cooldownMinutes;
+    if (body.enabled !== undefined) rule.enabled = Boolean(body.enabled);
+    if (body.severity !== undefined) rule.severity = String(body.severity).toUpperCase() as AlertRule['severity'];
+    if (body.description !== undefined) rule.description = String(body.description);
+    return jsonResponse({ rule });
+  }
+
+  if (pathOnly === '/api/v1/operations/backups' && method === 'GET') {
+    return jsonResponse({ backups: simulatedBackupList(store) });
+  }
+
+  if (pathOnly === '/api/v1/operations/backups' && method === 'POST') {
+    const archive = buildBackupArchive(simulatedBackupTables(store), {
+      createdBy: 'admin',
+      retentionDays: Number(body.retentionDays) || 30,
+    });
+    store.backups.unshift(archive);
+    store.auditLog.unshift({
+      id: `aud-backup-${nowMs}`,
+      actor: 'admin',
+      role: 'Admin',
+      action: 'FLEET_BACKUP_CREATED',
+      target_id: archive.manifest.backupId,
+      details_json: JSON.stringify({ checksum: archive.manifest.checksum }),
+      created_at: nowIso,
+    });
+    return jsonResponse({ backup: archive.manifest, sizeBytes: backupSizeBytes(archive), created: true }, 201);
+  }
+
+  const backupMatch = pathOnly.match(/^\/api\/v1\/operations\/backups\/([^/]+)(\/restore)?$/);
+  if (backupMatch && (method === 'GET' || method === 'POST')) {
+    const backupId = decodeURIComponent(backupMatch[1]);
+    const archive = store.backups.find((b) => b.manifest.backupId === backupId);
+    if (!archive) return jsonResponse({ error: 'Backup not found.' }, 404);
+    if (method === 'GET') {
+      return jsonResponse({ archive, verification: verifyBackupArchive(archive) });
+    }
+    const verification = verifyBackupArchive(archive);
+    if (!verification.valid) return jsonResponse({ error: 'INTEGRITY_CHECK_FAILED', details: verification.errors }, 400);
+    let restoredRows = 0;
+    for (const table of archive.tables) {
+      if (table.name === 'playback_events') store.playbackEvents = table.rows as unknown as PlaybackEvent[];
+      else if (table.name === 'health_samples') store.healthSamples = table.rows as unknown as HealthSample[];
+      else if (table.name === 'alert_rules') store.alertRules = table.rows as unknown as AlertRule[];
+      else if (table.name === 'fleet_alerts') store.fleetAlerts = table.rows as unknown as FleetAlert[];
+      else continue;
+      restoredRows += table.rows.length;
+    }
+    return jsonResponse({ restored: true, restoredRows, backupId, checksum: archive.manifest.checksum });
+  }
+
+  if (pathOnly === '/api/v1/operations/retention' && method === 'POST') {
+    const maxAgeDays = Math.max(1, Number(body.maxAgeDays) || 30);
+    const maxRows = Math.max(10, Number(body.maxRows) || 5_000);
+    const opts = { nowMs, maxAgeMs: maxAgeDays * 86_400_000, maxRows };
+    const retention = <T extends Record<string, unknown>>(items: T[], timeKey: string) =>
+      applyRetention(items, { ...opts, getTimestamp: (item) => String(item[timeKey] ?? '') });
+    const playback = retention(store.playbackEvents as unknown as Array<Record<string, unknown>>, 'startedAtUtc');
+    const health = retention(store.healthSamples as unknown as Array<Record<string, unknown>>, 'recordedAtUtc');
+    const events = retention(store.events, 'created_at');
+    const audit = retention(store.auditLog, 'created_at');
+    store.playbackEvents = playback.kept as unknown as PlaybackEvent[];
+    store.healthSamples = health.kept as unknown as HealthSample[];
+    store.events = events.kept;
+    store.auditLog = audit.kept;
+    return jsonResponse({
+      maxAgeDays,
+      maxRows,
+      pruned: {
+        playback_events: { pruned: playback.pruned.length, ...playback.byReason },
+        health_samples: { pruned: health.pruned.length, ...health.byReason },
+        events: { pruned: events.pruned.length, ...events.byReason },
+        audit_log: { pruned: audit.pruned.length, ...audit.byReason },
+      },
+    });
   }
 
   return jsonResponse({ ok: true });

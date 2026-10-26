@@ -1,3 +1,5 @@
+import { SavedSceneTemplate, instantiateSavedTemplate } from '@packages/scene-templates/export';
+import { createBlankScene, instantiateSceneTemplate } from '@packages/scene-templates';
 // ============================================================================
 // src/store/useStudioStore.ts — Zustand Immutable State, Undo/Redo History,
 // IndexedDB Autosave, Timeline Playhead, Package Builder & Kiosk State
@@ -113,7 +115,8 @@ export interface StudioState {
   resetToStarterProject: () => void;
 
   setActiveSceneId: (sceneId: string) => void;
-  addScene: (name?: string) => void;
+  addScene: (name?: string, templateId?: string) => void;
+  addSceneFromSavedTemplate: (template: SavedSceneTemplate) => void;
   duplicateScene: (sceneId: string) => void;
   deleteScene: (sceneId: string) => void;
   updateScene: (sceneId: string, partial: Partial<Scene>) => void;
@@ -329,59 +332,30 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     });
   },
 
-  addScene: (name) => {
-    const newId = createId('scene');
-    get().commitProjectChange('Add Scene', (draft) => {
-      const idx = draft.scenes.length + 1;
-      const newScene: Scene = {
-        id: newId,
-        name: name || `0${idx} — New Broadcast Scene`,
-        durationMs: draft.settings.defaultSceneDurationMs || 10000,
-        backgroundColor: '#0f172a',
-        backgroundGradient: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)',
-        referenceWidth: draft.settings.width,
-        referenceHeight: draft.settings.height,
-        elements: [
-          createNewElement('text', {
-            name: 'Scene Heading',
-            x: 120,
-            y: 120,
-            width: 900,
-            height: 80,
-            textProps: {
-              text: name || `Scene ${idx} Headline`,
-              fontFamily: 'Inter, system-ui, sans-serif',
-              fontSize: 48,
-              fontWeight: 'bold',
-              color: '#f8fafc',
-              textAlign: 'left',
-              letterSpacing: 1,
-              lineHeight: 1.2,
-              wrap: true,
-              autoFit: false,
-              scrolling: false,
-              direction: 'ltr',
-            },
-          }),
-        ],
-        animationTracks: [],
-        entryTransition: { type: 'fade', durationMs: 500, easing: 'easeOut' },
-        exitTransition: { type: 'fade', durationMs: 500, easing: 'easeOut' },
-        scriptIds: [],
-        permissions: ['scene:read'],
-        completionBehavior: 'advance',
-        failureBehavior: 'skip-scene',
-      };
+  addScene: (name, templateId) => {
+    const { settings } = get().project;
+    const newScene = templateId
+      ? instantiateSceneTemplate(templateId, settings.width, settings.height)
+      : createBlankScene(settings.width, settings.height, name || 'Blank Scene', settings.defaultSceneDurationMs || 10000);
+    if (name) newScene.name = name;
+    get().commitProjectChange(templateId ? 'Add Template Scene' : 'Add Blank Scene', draft => {
       draft.scenes.push(newScene);
-      if (draft.playlists[0]) {
-        draft.playlists[0].items.push({
-          id: createId('pli'),
-          sceneId: newId,
-          enabled: true,
-        });
-      }
+      if (draft.playlists[0]) draft.playlists[0].items.push({ id: createId('pli'), sceneId: newScene.id, enabled: true });
     });
-    set({ activeSceneId: newId, timelineTimeMs: 0 });
+    set({ activeSceneId: newScene.id, selectedElementIds: [], timelineTimeMs: 0, timelinePlaying: false });
+  },
+
+  addSceneFromSavedTemplate: template => {
+    const { settings } = get().project;
+    const instance = instantiateSavedTemplate(template, settings.width, settings.height);
+    get().commitProjectChange('Add Saved Template Scene', draft => {
+      draft.scenes.push(instance.scene);
+      draft.assets.push(...instance.assets);
+      draft.scripts.push(...instance.scripts);
+      draft.audioTracks = [...(draft.audioTracks ?? []), ...instance.audioTracks];
+      if (draft.playlists[0]) draft.playlists[0].items.push({ id: createId('pli'), sceneId: instance.scene.id, enabled: true });
+    });
+    set({ activeSceneId: instance.scene.id, selectedElementIds: [], timelineTimeMs: 0, timelinePlaying: false });
   },
 
   duplicateScene: (sceneId) => {

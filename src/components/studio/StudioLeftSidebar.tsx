@@ -3,6 +3,7 @@
 // Scene/Playlist Manager & Layer Hierarchy Tree
 // ============================================================================
 
+import { StudioNewSceneDialog } from './StudioNewSceneDialog';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Type,
@@ -46,6 +47,7 @@ type LeftTab = 'elements' | 'media' | 'scenes' | 'layers';
 
 export const StudioLeftSidebar: React.FC = () => {
   const [activeTab, setActiveTab] = useState<LeftTab>('elements');
+  const [newSceneOpen, setNewSceneOpen] = useState(false);
   const [mediaSearch, setMediaSearch] = useState('');
   const [resizingDrag, setResizingDrag] = useState<{
     startX: number;
@@ -63,7 +65,6 @@ export const StudioLeftSidebar: React.FC = () => {
     reorderLayer,
     groupSelected,
     ungroupSelected,
-    addScene,
     duplicateScene,
     deleteScene,
     importAssetItem,
@@ -685,7 +686,7 @@ export const StudioLeftSidebar: React.FC = () => {
           <div className="scenes-panel">
             <div className="section-header-row">
               <span>Presentation Scenes</span>
-              <button className="btn-xs" onClick={() => addScene()}>
+              <button className="btn-xs" onClick={() => setNewSceneOpen(true)}>
                 <Plus size={12} /> New Scene
               </button>
             </div>
@@ -929,6 +930,7 @@ export const StudioLeftSidebar: React.FC = () => {
         </span>
         <GripVertical size={13} className="inside-edge-grip-icon" />
       </div>
+      {newSceneOpen && <StudioNewSceneDialog onClose={() => setNewSceneOpen(false)} />}
     </aside>
   );
 };

@@ -3,6 +3,7 @@
 // Typography, Media, Widget, Animation & Restricted Script Sandbox Inspector
 // ============================================================================
 
+import { StudioScriptEditor } from './StudioScriptEditor';
 import React, { useEffect, useState } from 'react';
 import {
   Sliders,
@@ -32,11 +33,7 @@ import {
   WidgetKind,
 } from '@packages/project-model';
 import { QR_CONTENT_TYPES, formatQrWidgetPayload } from '@/utils/qrCodeGenerator';
-import {
-  RestrictedScriptRuntime,
-  ScriptExecutionDiagnostics,
-  applyScriptMessagesToElements,
-} from '@packages/script-runtime';
+
 import { createId } from '@packages/shared';
 
 type InspectorTab = 'properties' | 'animation' | 'scene-scripts';
@@ -79,6 +76,11 @@ const ANIMATION_PRESETS: Array<{
 
 export const StudioRightInspector: React.FC = () => {
   const [activeTab, setActiveTab] = useState<InspectorTab>('properties');
+  useEffect(() => {
+    const showProperties = () => setActiveTab('properties');
+    window.addEventListener('studio:show-properties', showProperties);
+    return () => window.removeEventListener('studio:show-properties', showProperties);
+  }, []);
   const [newTrackProp, setNewTrackProp] = useState<AnimatableProperty>('rotation');
   const [presetDelayMs, setPresetDelayMs] = useState<number>(0);
   const [presetDurationMs, setPresetDurationMs] = useState<number>(1000);
@@ -86,9 +88,6 @@ export const StudioRightInspector: React.FC = () => {
   const [presetDistancePx, setPresetDistancePx] = useState<number>(240);
   const [presetScaleFactor, setPresetScaleFactor] = useState<number>(1.2);
   const [replaceExistingMotions, setReplaceExistingMotions] = useState<boolean>(false);
-  const [scriptTestResult, setScriptTestResult] = useState<ScriptExecutionDiagnostics | null>(
-    null
-  );
   const [resizingDrag, setResizingDrag] = useState<{
     startX: number;
     startWidth: number;
@@ -221,34 +220,6 @@ export const StudioRightInspector: React.FC = () => {
     });
   };
 
-  const handleRunSandboxScriptTest = () => {
-    if (!activeScene) return;
-    const script = project.scripts[0];
-    if (!script) return;
-    const runtime = new RestrictedScriptRuntime(project.permissions, script.permissions);
-    runtime.invokeHook(script, 'initialize', { elapsedMs: 0 });
-    const enterRes = runtime.invokeHook(script, 'onSceneEnter', { elapsedMs: 0 });
-    const tickRes = runtime.invokeHook(script, 'onTick', { elapsedMs: Math.max(4500, timelineTimeMs) });
-    const combinedMessages = [...enterRes.emittedMessages, ...tickRes.emittedMessages];
-
-    commitProjectChange('Apply Sandbox Script Output', (draft) => {
-      const s = draft.scenes.find((sc) => sc.id === activeScene.id);
-      if (s) {
-        s.elements = applyScriptMessagesToElements(s.elements, combinedMessages);
-      }
-    });
-
-    setScriptTestResult({
-      scriptId: script.id,
-      operationsExecuted: enterRes.operationsExecuted + tickRes.operationsExecuted,
-      deniedActions: [...enterRes.deniedActions, ...tickRes.deniedActions],
-      emittedMessages: combinedMessages,
-      activeTimerCount: runtime.getActiveTimerCount(),
-      errors: [...enterRes.errors, ...tickRes.errors],
-    });
-    runtime.cleanupSceneResources();
-  };
-
   if (rightInspectorCollapsed) {
     return (
       <aside className="studio-right-inspector collapsed" aria-label="Collapsed Right Inspector">
@@ -371,6 +342,11 @@ export const StudioRightInspector: React.FC = () => {
         </div>
 
         <div className="sidebar-body">
+        {activeScene && <label className="inspector-label" style={{ display: 'flex', gap: 8, padding: 12 }}>
+          <input type="checkbox" checked={activeScene.aspectRatioLocked ?? false}
+            onChange={e => updateScene(activeScene.id, { aspectRatioLocked: e.target.checked })} />
+          Lock scene component aspect ratios
+        </label>}
         {/* TAB 1: ELEMENT PROPERTIES */}
         {activeTab === 'properties' && (
           <>
@@ -2419,49 +2395,7 @@ export const StudioRightInspector: React.FC = () => {
               </button>
             </div>
 
-            <div className="inspector-section">
-              <div className="palette-title">Restricted Script Sandbox (Spec Section 11)</div>
-              {project.scripts.map((script) => (
-                <div key={script.id} className="script-card">
-                  <div className="script-card-title">
-                    <ShieldAlert size={14} color="#38bdf8" />
-                    <strong>{script.name}</strong>
-                  </div>
-                  <p className="muted-line">{script.description}</p>
-                  <div className="permission-badges">
-                    {script.permissions.map((perm) => (
-                      <span key={perm} className="perm-badge">
-                        {perm}
-                      </span>
-                    ))}
-                  </div>
-                  <button
-                    className="btn-secondary full-width"
-                    style={{ marginTop: '8px' }}
-                    onClick={handleRunSandboxScriptTest}
-                  >
-                    <Play size={13} /> Execute in Restricted Sandbox
-                  </button>
-                </div>
-              ))}
-
-              {scriptTestResult && (
-                <div className="sandbox-result-box">
-                  <div className="sandbox-result-header">
-                    <CheckCircle2 size={14} color="#10b981" />
-                    <span>
-                      Sandbox Executed ({scriptTestResult.operationsExecuted} ops,{' '}
-                      {scriptTestResult.activeTimerCount} leaked timers)
-                    </span>
-                  </div>
-                  {scriptTestResult.emittedMessages.map((m, i) => (
-                    <div key={i} className="sandbox-msg-row">
-                      <code>{m.actionType}</code> → {m.elementId || m.message}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            <StudioScriptEditor />
           </div>
         )}
         </div>

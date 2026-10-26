@@ -221,3 +221,54 @@
 - **Phase 16 LAN Discovery Constants**: service id `digital-signage-studio`, protocol version `1`, endpoint `/api/v1/discovery`, default port `4000`, default scheme `http`
 - **Phase 16 CLI Entry Points**: `tools/windows/find-signage-server.cmd`, `tools/windows/Find-SignageServer.ps1`, `node tools/network-scanner/find-signage-server.mjs`, `npm run scan:server -- --subnet <cidr>`
 - **Phase 16 Test Fixtures**: `tests/unit/network-discovery.test.mjs`, `tests/integration/network-discovery.test.mjs`
+
+### [2026-10-26] Editor resize grid and contextual actions
+
+- On branch `arena/e37570ca-digital-signage`, added temporary grid overlay at the actual configured grid spacing during resizing (also corrected the previous doubled overlay spacing). A 1.8-second dwell with 5px jitter tolerance snaps active edges, retaining opposite anchors, minimum 24px size and locked ratio. Locked-ratio elements prioritize the dominant edge rather than forcing both dimensions onto the grid.
+- Added portal context menu via right-click or 1.5-second touch hold, with 8px movement cancellation, release/cancel cleanup, viewport-clamped positioning, outside/Escape dismissal, arrow/Home/End keyboard navigation and 44px menu targets. Clipboard is the existing internal editor clipboard, not the OS clipboard.
+- Properties expands the inspector and switches to its Properties tab through a scoped studio event. Actions reuse existing store commands and history. Resize gestures now checkpoint undo once at start (rather than recording every pointer move).
+- Verification: full suite 63 tests / 10 files passing; production TypeScript/Vite build passing (existing chunk-size warning). Real touchscreen hardware not available in sandbox.
+
+### [2026-10-26] Touch menu persistence adjustment
+
+- Per user feedback, finger movement no longer cancels the pending 1.5-second context-menu hold. Once open, movement and finger release leave the menu visible; outside press or choosing an action dismisses it (Escape remains available for keyboards).
+- Updated interaction regression test to cover movement before and after opening, release persistence, and outside dismissal.
+
+### [2026-10-26] Project-persisted grid settings dropdown
+
+- Replaced toolbar grid visibility toggle with `StudioGridSettings`: portal dialog with spacing, color, solid/dashed/dotted style, visibility, moving/resizing temporary visibility and separate grid/component snapping options.
+- Added optional ProjectSettings fields to preserve old projects without migration; defaults use existing showGrid session flag, gray solid lines, and temporary visibility during moving/resizing. Explicit visibility is project-persisted; settings use normal commit/history/persistence.
+- Overlay now uses an SVG pattern for reliable logical-pixel spacing and dashed/dotted lines. Visibility is independent of snapping; snapToGrid now controls dwell-based resize snapping as well as existing move snapping. Component snapping remains the existing move-only alignment behavior.
+- Verification: 65 tests across 10 files pass; TypeScript/production build passes with existing bundle-size warning. Added UI tests for persisted preference changes, render attributes, undo, hidden resize grid and disabled snap.
+
+### [2026-10-26] Scene aspect lock
+
+- Added optional `Scene.aspectRatioLocked`, defaulting off, with toolbar lock button and inspector checkbox; stored through existing updateScene persistence/undo path.
+- Enabled scenes show only nw/ne/sw/se resize handles and force proportional canvas resizing for every component. Existing element-specific aspect locks remain unchanged when scene lock is turned off.
+- Corrected proportional resize math to use dominant normalized pointer displacement, maintain 24px minimum dimensions, and retain opposite corner anchors for north/west handles. Grid dwell snapping retains the ratio.
+- Verification: 66 tests / 10 files pass, production build passes (existing chunk warning). Four-corner integration test verifies ratio, anchors, handle visibility and undo.
+
+### [2026-10-26] Declarative script authoring and player lifecycle
+
+- Added `StudioScriptEditor` in Scene & Scripts: JSON authoring/validation, explicit save, creation/deletion/enabled state, per-scene binding, project/scene grants, and selected-script preview with time/event controls. Removed legacy first-script demo UI. Undo/persistence use standard project commits.
+- Added `parseScriptModule` and `ScriptPlaybackSession` in `packages/script-runtime/session.ts`. Validate modules before playback, isolate invalid scripts, intersect project/scene/script permissions, throttle ticks to 100ms scene time, dispatch lifecycle/events, retain 20 diagnostics, and tear down runtimes on exit/loop/unmount/package replacement.
+- Added optional `ScriptRule.once`, `scheduleEvent` action, max 32 timers and 32 queued events per runtime. Timers are wall-clock; delivery is paused until playing ticks resume. Existing 500-op/40-message limits retained. No eval/new Function or arbitrary browser APIs.
+- `usePlaybackScripts` integrates standalone player output without mutating authored/loaded projects. Restart authored animation tracks using scene time; click and click:elementId events, scoped named host CustomEvent, structured log sink, local active-playlist scene seeking and playlist selection (navigation rate-limited to 1/s). Diagnostics shown in maintenance console. Exiting the player suppresses further host mutations while cleaning up.
+- Boundaries: no general JavaScript, external datafeed scripting action, or network-authoritative script navigation. Scene targets must occur in active playlist. Project script JSON editing is explicit-save; preview edits are undoable and need package rebuild to affect exported playback.
+- Verification: 74 tests / 12 files, including lifecycle/loop/pause/permissions/timers/malformed JSON, authoring CRUD/undo and playback hooks/events/non-mutation; TypeScript/Vite build passes with existing chunk-size warning.
+
+### [2026-10-26] Scene templates and New Scene dialogs
+
+- Added pure `packages/scene-templates` library with six asset-free built-in templates, native landscape/portrait/square dimensions and fresh editable text/shape components. `instantiateSceneTemplate` uses contain-style uniform scaling and centering to the current project canvas; no project resolution changes or script/asset dependencies.
+- Replaced immediate New Scene creation with `StudioNewSceneDialog`: choice screen, then template browser with shared-renderer SVG/foreignObject previews, dimensions/orientation, bottom Select buttons, category filter, search, Back/close/Escape, focus trapping/restoration and body scroll locking.
+- `addScene(name?, templateId?)` now creates genuinely blank scenes by default or instantiates a template; adds default playlist entry atomically, activates the new scene, clears stale selection and pauses/resets the timeline. Normal history/persistence remain in use.
+- Verified 78 tests across 13 files and production TypeScript/Vite build passing (existing bundle-size warning). Added browser/store regression coverage for dialogs/cancel/blank/template/undo and proportional fitting/independent IDs for every template.
+
+### [2026-10-26] Export scene templates and persistent personal library
+
+- Added toolbar **Export Scene Template**: captures active scene into versioned JSON, saves to My Templates then downloads `<scene-name>.signage-template.json`. If browser storage is full/unavailable, download still proceeds with an explicit warning, not a false saved confirmation.
+- Added pure `packages/scene-templates/export.ts` snapshot/instantiation helpers. Include bound scripts, embedded referenced media/fonts, scene/multi-scene audio; exclude environment audio. Synth audio presets do not require an asset file (starter chime has no asset). Missing/non-embedded media rejects export.
+- Saved templates are independent deep snapshots. Instantiation regenerates all scene/component/group/track/keyframe/asset/script/audio IDs, rewires internal references and scales positions/text/animation geometry. Cross-scene/playlist script navigation actions are omitted because source-project targets aren't portable; own-scene references are remapped. Destination project permissions are not automatically broadened.
+- Library uses versioned localStorage key `digital-signage:scene-templates:v1` via separate Zustand store; survives reload/project reset, is local to browser/origin and subject to browser quotas. Files are portable JSON snapshots; file import is not part of this change.
+- New Scene browser merges built-in and personal templates, previews embedded media/scene background, and exposes My Templates category. Selecting personal templates adds all dependencies and playlist item atomically through normal undo/persistence.
+- Verification: 81 tests across 14 files pass, TypeScript/Vite production build passes with existing bundle warning. New tests cover toolbar download, library persistence/preview/reuse/undo, media/group/script/track references and quota failure.

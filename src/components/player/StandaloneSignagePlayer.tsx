@@ -4,6 +4,7 @@
 // Authentication, Offline Cache Operation & Watchdog Recovery (Spec Sec 8 & 10)
 // ============================================================================
 
+import { usePlaybackScripts } from './usePlaybackScripts';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Maximize2,
@@ -44,7 +45,7 @@ import {
   MaintenanceSequenceTracker,
   matchesMaintenanceHotkey,
 } from '@packages/kiosk-integration';
-import { resolveActivePlaylist } from '@packages/playlist-engine';
+import { buildPlaylistTimeline, resolveActivePlaylist } from '@packages/playlist-engine';
 import { extractProjectFromArchive } from '@packages/signage-format';
 import { SignageElementRenderer } from '@/components/shared/SignageElementRenderer';
 import { formatDurationMs } from '@packages/shared';
@@ -239,14 +240,17 @@ export const StandaloneSignagePlayer: React.FC = () => {
   }, [standalonePlayerPackage, builtPackages, diagnostics]);
 
   // Schedule & Playlist resolution
+  const [scriptPlaylistId, setScriptPlaylistId] = useState<string | null>(null);
   const resolvedSchedule = useMemo(() => {
     if (!loadedPackageData) return null;
+    const selected = loadedPackageData.project.playlists.find(p => p.id === scriptPlaylistId);
+    if (selected) return { activePlaylist: selected, reason: 'Script-selected playlist' };
     return resolveActivePlaylist(
       loadedPackageData.project.playlists,
       loadedPackageData.project.schedules,
       new Date()
     );
-  }, [loadedPackageData]);
+  }, [loadedPackageData, scriptPlaylistId]);
 
   // Continuous playback loop & FPS monitor
   useEffect(() => {
@@ -455,6 +459,29 @@ export const StandaloneSignagePlayer: React.FC = () => {
       sessionStartRef.current + elapsedOffsetMs
     );
   }, [loadedPackageData, resolvedSchedule, isPlaying, elapsedOffsetMs]);
+
+  const lastScriptNavigation = useRef(-Infinity);
+  const playbackScripts = usePlaybackScripts(loadedPackageData?.project, timelineState, isPlaying, message => {
+    const project = loadedPackageData?.project;
+    if (!project) return;
+    if (['selectPlaylist', 'transitionToScene'].includes(message.actionType)) {
+      if (Date.now() - lastScriptNavigation.current < 1000) return;
+      lastScriptNavigation.current = Date.now();
+    }
+    if (message.actionType === 'log') {
+      diagnostics.log(message.level ?? 'info', 'PLAYBACK', `[script ${message.scriptId}] ${message.message ?? ''}`);
+    } else if (message.actionType === 'selectPlaylist' && project.playlists.some(p => p.id === message.playlistId)) {
+      if (resolvedSchedule?.activePlaylist.id !== message.playlistId) {
+        setScriptPlaylistId(message.playlistId!); setElapsedOffsetMs(0);
+      }
+    } else if (message.actionType === 'transitionToScene' && resolvedSchedule && timelineState) {
+      const { slots, totalCycleDurationMs } = buildPlaylistTimeline(resolvedSchedule.activePlaylist, project.scenes);
+      const target = slots.find(slot => slot.scene.id === message.sceneId);
+      if (target && target.scene.id !== timelineState.activeScene.id) {
+        setElapsedOffsetMs(timelineState.cycleIndex * totalCycleDurationMs + target.startOffsetMs);
+      }
+    }
+  });
 
   const toggleFullscreen = async () => {
     try {
@@ -868,17 +895,18 @@ export const StandaloneSignagePlayer: React.FC = () => {
                 } as React.CSSProperties
               }
             >
-              {timelineState.elements
+              {playbackScripts.elements
                 .filter((el) => el.type !== 'group')
                 .map((el) => (
+                  <div key={el.id} onClick={() => { playbackScripts.event('click'); playbackScripts.event(`click:${el.id}`); }}>
                   <SignageElementRenderer
-                    key={el.id}
                     element={el}
                     assets={project.assets}
                     currentTimeMs={timelineState.sceneElapsedMs}
                     deviceName={kioskConfig.deviceName}
                     sceneName={activeScene.name}
                   />
+                  </div>
                 ))}
             </div>
           </div>
@@ -939,6 +967,9 @@ export const StandaloneSignagePlayer: React.FC = () => {
                     <span>Schedule &amp; Watchdog:</span>{' '}
                     <strong>
                       {resolvedSchedule?.reason} • {watchdogState.state} ({estimatedFps} FPS)
+                      <details><summary>Script diagnostics ({playbackScripts.diagnostics.length})</summary>
+                        <pre style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(playbackScripts.diagnostics, null, 2)}</pre>
+                      </details>
                     </strong>
                   </div>
                   <div>

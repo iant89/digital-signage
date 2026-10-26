@@ -414,6 +414,8 @@ export interface TransitionConfig {
 }
 
 export interface Scene {
+  /** Preserve component proportions and expose corner-only resize handles. */
+  aspectRatioLocked?: boolean;
   id: string;
   name: string;
   durationMs: number; // 0 = indefinite
@@ -493,7 +495,10 @@ export interface PlaybackSchedule {
 }
 
 export interface ScriptAction {
+  eventName?: string;
+  delayMs?: number;
   type:
+    | 'scheduleEvent'
     | 'setText'
     | 'setVisibility'
     | 'setOpacity'
@@ -510,6 +515,8 @@ export interface ScriptAction {
 }
 
 export interface ScriptRule {
+  /** Fire a matching rule at most once per scene entry. */
+  once?: boolean;
   id: string;
   hook: 'initialize' | 'onSceneEnter' | 'onTick' | 'onEvent' | 'onSceneExit' | 'dispose';
   eventName?: string;
@@ -560,6 +567,11 @@ export interface ProjectSettings {
   scalingMode: ScalingMode;
   safeAreaPercent: number;
   gridSizePx: number;
+  gridVisible?: boolean;
+  gridColor?: string;
+  gridLineStyle?: 'solid' | 'dashed' | 'dotted';
+  gridShowDuringResize?: boolean;
+  gridShowDuringMove?: boolean;
   snapToGrid: boolean;
   snapToElements: boolean;
   defaultSceneDurationMs: number;

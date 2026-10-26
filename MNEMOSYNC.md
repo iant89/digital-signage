@@ -284,3 +284,16 @@
 - Root cause: selection bounding box used z-index 200 in the same stacking context as authored component z-indices. High-z components could paint/hit-test above resize controls, causing a new selection/move instead.
 - Added isolated `canvas-scene-elements` stacking container at z-index 0; renderer components retain authored ordering within it, while selection controls are siblings at z-index 10000. Canvas surface isolates its own editor stacking. Wrapper passes empty-space hits through; component wrappers explicitly enable pointer events.
 - Added regression with overlapping high-z components to verify overlay structure and selected-only resizing. jsdom verifies structure/events, not physical browser hit testing. All 84 tests / 14 files pass; TypeScript/Vite build passes with existing bundle-size warning.
+
+### [2026-10-26] Mobile drag intent and magnetic rotation guide
+
+- Working branch `arena/19dd9f38-digital-signage`. Updated the earlier requested touch-menu persistence behavior: movement beyond 8 screen pixels now cancels only a pending hold and suppresses native contextmenu through release, with no timer re-arming until a fresh pointer press. The timer and gesture origin clean up on up/cancel/blur/unmount. An already-open menu still persists after moving/lifting the finger.
+- Added pure `snapRotation` helper: clockwise normalized degrees, inclusive ±5° snap windows around every 45°, with floating-point boundary tolerance and wraparound 355–5 -> 0.
+- Added sibling `RotationGuide` overlay outside the rotated selection box. Constant 300px screen size using inverse canvas zoom, translucent/blurred acrylic disc, 5° tick marks, eight upright angle labels, moving needle and central large angle readout. Pointer-events:none prevents interference with rotation/resize controls. Rotation now records a single undo snapshot at gesture start.
+- Verification: 86 tests / 14 files pass; TypeScript/Vite build passes with pre-existing chunk-size warning. Tests cover touch movement/no rearm/native-menu suppression/release/rehold, all snap-band boundaries, stationary guide/angle output and rotation undo. Physical mobile browser testing remains recommended.
+
+### [2026-10-26] Context menu dismissal on component press
+
+- Fixed outside-press dismissal listener to use window pointerdown capture (including symmetric cleanup). Component drag/resize handlers stop bubbling, which previously kept an open menu visible when pressing a component.
+- Menu-contained presses are still ignored by outside dismissal; actions continue to close the menu normally. Regression covers mouse/touch component presses and menu-item pointerdown preservation.
+- Verification: 87 tests / 14 files passing; production build passes with existing chunk-size warning.

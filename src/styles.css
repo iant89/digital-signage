@@ -2384,3 +2384,20 @@ body.kiosk-lockout-active .app-global-nav {
   pointer-events: none;
 }
 .selection-bounding-box { z-index: 10000; }
+
+.rotation-angle-guide {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  z-index: 10001;
+  pointer-events: none;
+  border-radius: 50%;
+  background: rgba(15, 30, 50, .52);
+  backdrop-filter: blur(14px) saturate(150%);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
+  box-shadow: 0 12px 40px #0006, inset 0 0 0 1px #bae6fd55;
+}
+.rotation-angle-guide svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.rotation-guide-disc { fill: rgba(15, 30, 50, .35); stroke: #bae6fd88; stroke-width: 1; }
+.rotation-guide-label { fill: #e0f2fe; font: 12px system-ui, sans-serif; }
+.rotation-guide-value { fill: #fff; font: 700 32px system-ui, sans-serif; font-variant-numeric: tabular-nums; }
+.rotation-guide-caption { fill: #9dbbd0; font: 8px system-ui, sans-serif; letter-spacing: 2px; }

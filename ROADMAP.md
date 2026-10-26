@@ -231,3 +231,15 @@ This document tracks the end-to-end engineering roadmap for **Digital Signage St
 - [x] Isolate authored scene components in their own z-index stack so arbitrary component layer values cannot cover editor selection controls.
 - [x] Keep resize/rotation controls above scene content and editor grid/outlines, with click-through scene wrapper and interactive component children.
 - [x] Regression test with overlapping components at z-indices above 200,000 verifies overlay separation, retained selection and resizing without moving the underlying component. Full suite: 84 tests passing; production build passes.
+
+## Touch Gesture Intent & Rotation Protractor
+
+- [x] Cancel pending touch-hold context menus after more than 8 screen pixels of movement; never re-arm during the same gesture. Release/cancel then a fresh press is required. Suppress native context-menu events from the dragged gesture too. Already-open menus remain persistent.
+- [x] Normalize clockwise rotation to 0–359° and snap inclusive ±5° bands to 0/45/90/135/180/225/270/315, including wraparound at 355–5°.
+- [x] Show a stationary translucent acrylic circular protractor while rotating, with 5° ticks, labeled 45° stops, moving angle indicator and large central degree readout. Overlay remains upright and constant screen size at different canvas zooms; rotation gesture has one undo checkpoint.
+- [x] Automated touch release/re-hold, open-menu persistence, snap-band boundaries, guide/rotation integration and undo regression coverage. Verification: 86 tests / 14 files passing; production build passing.
+
+## Context Menu Outside-Press Dismissal
+
+- [x] Listen for outside pointer presses in capture phase, so component/handle handlers stopping propagation cannot prevent dismissal. Menu-item presses remain inside and execute normally.
+- [x] Mouse/touch component-press regression coverage; full verification: 87 tests passing, production build passing.

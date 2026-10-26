@@ -81,12 +81,15 @@ describe('canvas context menu and resize grid', () => {
     fireEvent.pointerUp(window);
   });
 
-  it('snaps inclusive five-degree bands around all eight stops including wraparound', () => {
+  it('steps through five-degree ticks with doubled ten-degree holds at major stops', () => {
     for (let stop = 0; stop < 360; stop += 45) {
-      for (const offset of [-5, -4, 0, 4, 5]) expect(snapRotation(stop + offset)).toBe(stop);
-      expect(snapRotation(stop + 6)).toBe((stop + 6) % 360);
-      expect(snapRotation(stop - 6)).toBe((stop - 6 + 360) % 360);
+      for (const offset of [-10, -9, -5, 0, 5, 9, 10]) expect(snapRotation(stop + offset)).toBe(stop);
+      expect(snapRotation(stop + 13)).toBe((stop + 15) % 360);
+      expect(snapRotation(stop - 13)).toBe((stop - 15 + 360) % 360);
     }
+    for (let angle = -360; angle < 720; angle += .7) expect(snapRotation(angle) % 5).toBe(0);
+    expect(snapRotation(10.01)).toBe(10);
+    expect(snapRotation(34.99)).toBe(35);
     expect(snapRotation(720)).toBe(0);
     expect(snapRotation(-90)).toBe(270);
   });
@@ -225,6 +228,46 @@ describe('canvas context menu and resize grid', () => {
     expect(elements.find(e => e.id === selected.id)?.width).toBe(240);
     expect(elements.find(e => e.id === underneath.id)?.x).toBe(0);
     expect(elements.find(e => e.id === underneath.id)?.y).toBe(0);
+  });
+
+  it('places the selection and grabbers at the upright outer edges of a rotated component', () => {
+    const el = firstElement();
+    act(() => {
+      useStudioStore.getState().updateElement(el.id, { x: 100, y: 100, width: 200, height: 100, rotation: 90, scaleX: 1, scaleY: 1, aspectRatioLocked: false });
+      useStudioStore.setState({ selectedElementIds: [el.id], canvasZoom: 1 });
+    });
+    const { container } = render(<StudioCanvasWorkspace />);
+    const box = container.querySelector<HTMLElement>('.selection-bounding-box')!;
+    expect(parseFloat(box.style.left)).toBeCloseTo(150);
+    expect(parseFloat(box.style.top)).toBeCloseTo(50);
+    expect(parseFloat(box.style.width)).toBeCloseTo(100);
+    expect(parseFloat(box.style.height)).toBeCloseTo(200);
+    expect(box.style.transform).toBe('');
+    expect(box.querySelectorAll('.resize-handle')).toHaveLength(8);
+    fireEvent.pointerDown(box.querySelector('.handle-e')!, { clientX: 250, clientY: 150 });
+    fireEvent.pointerMove(window, { clientX: 300, clientY: 150 });
+    fireEvent.pointerUp(window);
+    expect(firstElement().rotation).toBe(90);
+    expect(firstElement().height).toBeCloseTo(150);
+    expect(parseFloat(box.style.left)).toBeCloseTo(150);
+    expect(parseFloat(box.style.width)).toBeCloseTo(150);
+    act(() => useStudioStore.getState().undo());
+    expect(firstElement().height).toBeCloseTo(100);
+  });
+
+  it('keeps grabber sizes independent of canvas zoom and places the rotation stem outside the box', () => {
+    const el = firstElement();
+    act(() => useStudioStore.setState({ selectedElementIds: [el.id], canvasZoom: .25 }));
+    const { container } = render(<StudioCanvasWorkspace />);
+    const box = container.querySelector<HTMLElement>('.selection-bounding-box')!;
+    expect(box.style.getPropertyValue('--handle-unit')).toBe('4px');
+    expect(box.querySelector('.rotation-handle-stem')?.getAttribute('aria-hidden')).toBe('true');
+    expect(box.querySelectorAll('.resize-handle')).toHaveLength(8);
+    act(() => useStudioStore.setState({ canvasZoom: 1 }));
+    expect(box.style.getPropertyValue('--handle-unit')).toBe('1px');
+    fireEvent.pointerDown(box.querySelector('.rotation-handle')!, { clientX: 50, clientY: 16 });
+    expect(screen.getByRole('img', { name: /Rotation guide/ })).toBeTruthy();
+    fireEvent.pointerUp(window);
   });
 
   it('anchors opposite edges and preserves aspect ratio when snapping', () => {

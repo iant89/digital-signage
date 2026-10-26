@@ -2401,3 +2401,70 @@ body.kiosk-lockout-active .app-global-nav {
 .rotation-guide-label { fill: #e0f2fe; font: 12px system-ui, sans-serif; }
 .rotation-guide-value { fill: #fff; font: 700 32px system-ui, sans-serif; font-variant-numeric: tabular-nums; }
 .rotation-guide-caption { fill: #9dbbd0; font: 8px system-ui, sans-serif; letter-spacing: 2px; }
+
+/* Screen-sized grabbers: visual marks stay compact while transparent targets are 2× wider. */
+.selection-bounding-box { --handle-unit: 1px; }
+.resize-handle, .rotation-handle {
+  width: calc(32 * var(--handle-unit));
+  height: calc(32 * var(--handle-unit));
+  transform: translate(-50%, -50%);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-sizing: border-box;
+  overflow: visible;
+}
+.resize-handle::before, .rotation-handle::before {
+  content: '';
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: calc(16 * var(--handle-unit));
+  height: calc(16 * var(--handle-unit));
+  box-sizing: border-box;
+  border: calc(3 * var(--handle-unit)) solid #0284c7;
+  border-radius: calc(3 * var(--handle-unit));
+  background: #fff;
+  pointer-events: none;
+}
+.handle-nw { top: 0; left: 0; right: auto; bottom: auto; }
+.handle-n { top: 0; left: 50%; right: auto; bottom: auto; }
+.handle-ne { top: 0; left: 100%; right: auto; bottom: auto; }
+.handle-e { top: 50%; left: 100%; right: auto; bottom: auto; }
+.handle-se { top: 100%; left: 100%; right: auto; bottom: auto; }
+.handle-s { top: 100%; left: 50%; right: auto; bottom: auto; }
+.handle-sw { top: 100%; left: 0; right: auto; bottom: auto; }
+.handle-w { top: 50%; left: 0; right: auto; bottom: auto; }
+.rotation-handle-stem {
+  position: absolute;
+  left: 25%;
+  top: calc(-84 * var(--handle-unit));
+  width: calc(2 * var(--handle-unit));
+  height: calc(84 * var(--handle-unit));
+  transform: translateX(-50%);
+  background: #38bdf8;
+  opacity: .7;
+  pointer-events: none;
+}
+.rotation-handle {
+  top: calc(-84 * var(--handle-unit));
+  left: 25%;
+  width: calc(40 * var(--handle-unit));
+  height: calc(40 * var(--handle-unit));
+}
+.rotation-handle::before {
+  width: calc(20 * var(--handle-unit));
+  height: calc(20 * var(--handle-unit));
+  border-radius: 50%;
+  border-color: #090d16;
+  background: #38bdf8;
+}
+@media (pointer: coarse) {
+  .resize-handle, .rotation-handle {
+    min-width: calc(48 * var(--handle-unit));
+    min-height: calc(48 * var(--handle-unit));
+  }
+}
+/* Keep extended controls reachable near scene edges without leaking authored content. */
+.canvas-logical-surface { overflow: visible; }
+.canvas-scene-elements { overflow: hidden; }

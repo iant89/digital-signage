@@ -243,3 +243,23 @@ This document tracks the end-to-end engineering roadmap for **Digital Signage St
 
 - [x] Listen for outside pointer presses in capture phase, so component/handle handlers stopping propagation cannot prevent dismissal. Menu-item presses remain inside and execute normally.
 - [x] Mouse/touch component-press regression coverage; full verification: 87 tests passing, production build passing.
+
+## Upright Outer Selection Bounds for Rotated Components
+
+- [x] Compute axis-aligned outer envelopes from rotation and signed scale, keeping selection boxes/labels upright and placing resize handles at outer edges and corners.
+- [x] Map screen-aligned handle resizing back to component dimensions while preserving rotation, minimum size, aspect locking, grid dwell and opposite-envelope anchors. Use stable proportional resizing near diagonal angles where independent envelope dimensions are mathematically coupled.
+- [x] Apply the same upright envelopes to multi-selection/group-member outlines. Keep the rotation guide centered on the component.
+- [x] Geometry tests cover arbitrary rotations, negative/nonuniform scales, 90° handle mapping and diagonal stability. UI regression verifies outer box, handles, resizing and undo. Verification: 91 tests / 15 files passing; production build passing.
+
+## Rotation Tick Stepping & Stronger Major Stops
+
+- [x] Rotation now advances in 5° increments matching protractor ticks, with doubled inclusive ±10° hold bands around each 45° major stop (including zero wraparound).
+- [x] Guide displays the actual stored angle without reapplying magnetic snapping to already-quantized values.
+- [x] Updated regression coverage for major-stop boundaries and 5° stepping across multiple turns. Verification: 91 tests passing; production build passing.
+
+## Mobile-Friendly Grabber Reach & Hit Areas
+
+- [x] Move rotation grabber to 25% of the top selection edge, with an 84px screen-space stem (approximately 3× previous reach).
+- [x] Separate visible marks from transparent targets: 16px resize marks in 32px targets, 20px rotation mark in a 40px target; touch/coarse pointers receive 48px minimum targets.
+- [x] Keep controls screen-sized through canvas zoom and allow extended controls outside scene edges while clipping authored content separately.
+- [x] Regression covers zoom compensation, stem placement structure and rotation initiation. Verification: 92 tests / 15 files passing; production build passing.

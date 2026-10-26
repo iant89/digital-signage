@@ -147,6 +147,32 @@ describe('canvas context menu and resize grid', () => {
     expect(container.querySelectorAll('.resize-handle').length).toBe(4);
   });
 
+  it('keeps handles outside the authored layer stack and resizes only the selected overlapping component', () => {
+    const scene = useStudioStore.getState().project.scenes[0];
+    const selected = scene.elements[0];
+    const underneath = scene.elements[1];
+    act(() => {
+      useStudioStore.getState().updateElement(selected.id, { x: 100, y: 100, width: 200, height: 100, zIndex: 200001, aspectRatioLocked: false });
+      useStudioStore.getState().updateElement(underneath.id, { x: 0, y: 0, width: 800, height: 600, zIndex: 200000 });
+      useStudioStore.setState({ selectedElementIds: [selected.id], canvasZoom: 1 });
+    });
+    const { container } = render(<StudioCanvasWorkspace />);
+    const content = container.querySelector('.canvas-scene-elements')!;
+    const handle = container.querySelector('.handle-se')!;
+    expect(content.contains(container.querySelector(`[data-element-id="${underneath.id}"]`))).toBe(true);
+    expect(content.contains(handle)).toBe(false);
+    expect(handle.closest('.selection-bounding-box')?.parentElement).toBe(content.parentElement);
+    fireEvent.pointerDown(handle, { clientX: 300, clientY: 200 });
+    fireEvent.pointerMove(window, { clientX: 340, clientY: 230 });
+    fireEvent.pointerUp(window);
+    const updated = useStudioStore.getState();
+    const elements = updated.project.scenes[0].elements;
+    expect(updated.selectedElementIds).toEqual([selected.id]);
+    expect(elements.find(e => e.id === selected.id)?.width).toBe(240);
+    expect(elements.find(e => e.id === underneath.id)?.x).toBe(0);
+    expect(elements.find(e => e.id === underneath.id)?.y).toBe(0);
+  });
+
   it('anchors opposite edges and preserves aspect ratio when snapping', () => {
     expect(snapResizeToGrid({ x: 13, y: 13, width: 100, height: 100 }, 'nw', 24))
       .toEqual({ x: 24, y: 24, width: 89, height: 89 });

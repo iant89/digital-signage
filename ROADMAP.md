@@ -218,3 +218,16 @@ This document tracks the end-to-end engineering roadmap for **Digital Signage St
 - [x] Export includes scene settings, components, animation tracks, referenced embedded media/fonts, bound scripts and scene/multi-scene audio. Creating an instance remaps scene/component/group/track/keyframe/asset/script IDs and fits proportionally; imported dependencies and playlist insertion share one undoable change.
 - [x] Storage/quota failures produce a warning while preserving the download; missing/external media is rejected rather than silently producing a broken portable file. Library is browser/origin-local, separate from project undo/reset.
 - [x] Tests exercise toolbar download, persistence, browser reuse, dependency remapping, undo and storage failure. Verification: 81 tests / 14 files; production build passing.
+
+## Template Visual Polish & Mobile Selection
+
+- [x] Redesign all six built-in layouts with layered cards, editorial typography, coordinated colors/gradients, mastheads, detail panels and footer hierarchy. Keep every component editable and asset-free.
+- [x] Replace SVG foreignObject previews with clipped, measured DOM previews rendered through the shared renderer. Disable preview hit-testing so transformed components cannot intercept template selection taps.
+- [x] Mobile dialog scrolling, safe-area spacing, single-column cards and non-shrinking 48px Select buttons; isolate portal events from editor controls.
+- [x] Regression tests for touch-generated selection at mobile viewport width, preview isolation and design typography. Real iOS/Android device validation remains recommended.
+
+## Overlapping Component Resize Handle Fix
+
+- [x] Isolate authored scene components in their own z-index stack so arbitrary component layer values cannot cover editor selection controls.
+- [x] Keep resize/rotation controls above scene content and editor grid/outlines, with click-through scene wrapper and interactive component children.
+- [x] Regression test with overlapping components at z-indices above 200,000 verifies overlay separation, retained selection and resizing without moving the underlying component. Full suite: 84 tests passing; production build passes.

@@ -411,7 +411,8 @@ export const StudioCanvasWorkspace: React.FC = () => {
             </div>
           )}
 
-          {/* Render All Scene Elements */}
+          {/* Keep authored z-indices inside a separate stack, below editor controls. */}
+          <div className="canvas-scene-elements">
           {evaluatedElements.map((el) => {
             if (el.type === 'group') {
               return null;
@@ -421,7 +422,7 @@ export const StudioCanvasWorkspace: React.FC = () => {
               <div
                 key={el.id}
                 data-element-id={el.id}
-                style={{ touchAction: 'none', userSelect: 'none' }}
+                style={{ touchAction: 'none', userSelect: 'none', pointerEvents: 'auto' }}
                 onPointerDown={(e) => {
                   if (e.button !== 0) return;
                   e.stopPropagation();
@@ -467,6 +468,8 @@ export const StudioCanvasWorkspace: React.FC = () => {
               </div>
             );
           })}
+
+          </div>
 
           {/* Multi-Selection & Group Member Outlines */}
           {activeScene.elements

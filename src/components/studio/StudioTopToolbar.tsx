@@ -1,8 +1,11 @@
+import { exportSceneTemplate } from '@packages/scene-templates/export';
+import { useTemplateLibrary } from '@/services/templateLibrary';
 // ============================================================================
 // src/components/studio/StudioTopToolbar.tsx — Top Studio Authoring Toolbar
 // ============================================================================
 
 import React from 'react';
+import { StudioGridSettings } from './StudioGridSettings';
 import {
   Undo2,
   Redo2,
@@ -18,7 +21,6 @@ import {
   AlignCenterVertical,
   AlignEndVertical,
   Columns,
-  Grid,
   ShieldCheck,
   ZoomIn,
   ZoomOut,
@@ -30,6 +32,7 @@ import {
   PanelLeft,
   PanelRight,
   PanelBottom,
+  LockKeyhole,
 } from 'lucide-react';
 import { useStudioStore } from '@/store/useStudioStore';
 import { RESOLUTION_PRESETS } from '@packages/project-model';
@@ -57,8 +60,6 @@ export const StudioTopToolbar: React.FC = () => {
     ungroupSelected,
     canvasZoom,
     setCanvasZoom,
-    showGrid,
-    setShowGrid,
     showSafeArea,
     setShowSafeArea,
     leftSidebarCollapsed,
@@ -84,6 +85,25 @@ export const StudioTopToolbar: React.FC = () => {
         s.referenceHeight = preset.height;
       }
     });
+  };
+
+  const handleExportTemplate = () => {
+    try {
+      const template = exportSceneTemplate(project, activeSceneId);
+      const blob = new Blob([JSON.stringify(template, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `${template.name.replace(/[^a-z0-9_-]+/gi, '-').replace(/^-|-$/g, '') || 'scene'}.signage-template.json`;
+      let saved = true;
+      try { useTemplateLibrary.getState().save(template); }
+      catch { saved = false; }
+      document.body.appendChild(anchor);
+      try { anchor.click(); } finally { anchor.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
+      useStudioStore.getState().notify(saved ? 'success' : 'warning', saved
+        ? 'Scene template saved to My Templates and downloaded.'
+        : 'Template downloaded, but browser storage is full or unavailable. It was not added to My Templates.');
+    } catch (error) { useStudioStore.getState().notify('error', (error as Error).message); }
   };
 
   const handleQuickExport = () => {
@@ -344,12 +364,14 @@ export const StudioTopToolbar: React.FC = () => {
         >
           Fit
         </button>
-        <button
-          className={`icon-btn ${showGrid ? 'active' : ''}`}
-          onClick={() => setShowGrid(!showGrid)}
-          title="Toggle Snap Grid"
-        >
-          <Grid size={15} />
+        <StudioGridSettings />
+        <button className={`icon-btn ${activeScene?.aspectRatioLocked ? 'active' : ''}`}
+          aria-label="Scene aspect lock" aria-pressed={activeScene?.aspectRatioLocked ?? false}
+          title="Scene aspect lock: preserve component proportions with corner-only resizing"
+          onClick={() => activeScene && useStudioStore.getState().updateScene(activeScene.id, {
+            aspectRatioLocked: !activeScene.aspectRatioLocked,
+          })}>
+          <LockKeyhole size={15} />
         </button>
         <button
           className={`btn-xs ${showSafeArea ? 'active' : ''}`}
@@ -377,6 +399,10 @@ export const StudioTopToolbar: React.FC = () => {
           }}
         >
           <Play size={14} /> Launch Player
+        </button>
+        <button className="btn-secondary" onClick={handleExportTemplate} disabled={!activeScene}
+          title="Save the current scene to My Templates and download a template file">
+          <Download size={14} /> Export Scene Template
         </button>
         <button className="btn-primary" onClick={handleQuickExport}>
           <Download size={14} /> Export .signage

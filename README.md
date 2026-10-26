@@ -116,3 +116,9 @@ This repository is pre-configured for automated **GitHub Pages** deployment via 
 2. Push to `main` (or trigger **Deploy Digital Signage Studio to GitHub Pages** from the **Actions** tab).
 3. Vite builds with `base: './'`, copies `public/.nojekyll` and `dist/404.html` for single-page routing, and uses [`src/services/staticServerSimulator.ts`](src/services/staticServerSimulator.ts) to transparently emulate `/api/v1/*` endpoints in the browser when hosted statically without a Node.js backend.
 
+
+### Creating scenes from templates
+
+In the editor's **Scenes** tab, choose **New Scene**. Select **Blank scene** for an empty canvas, or **Choose a template** to browse six built-in layouts. Template cards show a preview and native pixel size; use search/category filters and the **Select** button at the bottom of a card. Layouts are fitted proportionally to your current project resolution, and every component remains editable. Creating a scene supports Undo and adds it to the default playlist.
+
+Use **Export Scene Template** in the editor toolbar to save the active scene to **My Templates** and download a `.signage-template.json` snapshot. Your saved layouts appear automatically in **New Scene → Choose a template → My Templates**, including their previews and sizes. Scene components, animations, embedded media, bound scripts and scene audio are carried into new editable instances. The library is local to this browser/site and survives project resets; keep downloaded files as backups. If browser storage is full, the export still downloads and a warning explains that it was not saved in the library. Externally linked/missing media must be embedded before export. Cross-project scene/playlist script navigation is not carried into new instances.

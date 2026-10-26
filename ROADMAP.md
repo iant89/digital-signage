@@ -171,3 +171,50 @@ This document tracks the end-to-end engineering roadmap for **Digital Signage St
 - [x] **Windows Entry Points (`tools/windows/`)**: Added `find-signage-server.cmd` (cmd.exe launcher) and `Find-SignageServer.ps1` (PowerShell cmdlet-style front-end with `-Subnet`, `-Json`, `-First`, `-Https`, `-Insecure`, etc.), plus `npm run scan:server` for cross-platform use.
 - [x] **Documentation**: Added `tools/network-scanner/README.md` (usage, output modes, arguments, exit codes, firewall notes), plus architecture/kiosk/security notes for the discovery contract.
 - [x] **Verification**: Added `tests/unit/network-discovery.test.mjs` (11 tests: IPv4 math, CIDR/range expansion, URL building, descriptor validation, CLI parsing, fallback, concurrency) and `tests/integration/network-discovery.test.mjs` (5 tests: descriptor shape, real server discovery via child-process CLI, decoy HTTP rejection, auto-detect handling, invalid arguments). `npm test` = 59/59 passing, `npm run build` = clean, and the GitHub Actions `npm test` + `build:pages` job passes on the pushed branch (the auto-detect test tolerates CI Docker `/16` bridges via the `--max-hosts` safety cap).
+
+## Editor Interaction Enhancement — Resize Grid & Context Menu
+
+- [x] Show the configured logical-pixel grid during resizing; dwell for 1.8 seconds without significant movement to snap active edges (opposite edges anchored, minimum size and aspect lock respected).
+- [x] Right-click or hold touch for 1.5 seconds to open component actions: copy, cut, paste, duplicate, delete and properties. Background menu supports paste.
+- [x] Keep touch hold active through movement; cancel pending hold on release/cancel; dismiss menu outside or with Escape; arrow-key menu navigation and touch-friendly targets.
+- [x] Resize gesture undo checkpoint and automated interaction/geometry coverage (`tests/browser/canvas-interactions.test.tsx`).
+
+## Editor Grid Settings Dropdown
+
+- [x] Toolbar grid icon opens an accessible, outside-click/Escape-dismissible settings popover (portaled outside toolbar overflow).
+- [x] Configure spacing (4–256 logical pixels), color, solid/dashed/dotted lines, persistent visibility, temporary visibility while moving/resizing, grid snapping and component snapping.
+- [x] Save grid preferences in project settings with backward-compatible optional fields and undo support; rendering and resize/move snapping honor those preferences independently.
+- [x] Browser tests verify dropdown editing, SVG grid style/spacing/color, undo, visibility and disabled resize snapping. Full suite: 65 tests passing; production build passes.
+
+## Scene Aspect Lock
+
+- [x] Scene-level aspect lock toggle in toolbar and inspector; saved with scene and undoable, defaults off for existing scenes.
+- [x] When enabled, expose only four corner resize handles and preserve each component's current ratio (without overwriting component-level locks).
+- [x] Corner resizing uses the dominant pointer axis and anchors the opposite corner, including grid dwell snapping.
+- [x] Regression coverage exercises all four corners, ratio preservation, opposite anchors, restoring eight handles and undo. Full suite: 66 tests passing; production build passes.
+
+## Declarative Scripting — Authoring & Standalone Playback
+
+- [x] Create/select/edit JSON scripts, validate/save, enable/disable, delete, bind per scene, and grant explicit project/scene permissions with undo/persistence.
+- [x] Selected-script sandbox with configurable elapsed time/event, output/errors/denials and undoable element preview (replaces the first-script-only demo).
+- [x] Player lifecycle initialize/enter/tick/event/exit/dispose, scene-loop reinitialization, tick throttling and pause-aware event delivery.
+- [x] Transient text/visibility/opacity, authored animation restart, click/tap and named host events, structured logging, local scene/playlist navigation, bounded one-shot timer events and once-per-entry rules.
+- [x] Validate untrusted rules, require three-layer permissions, bound operations/messages/timers/queued events/diagnostics; teardown on scene exit, package change and unmount.
+- [x] Unit/browser regression coverage and operator/API examples in `docs/script-api.md`. Verification: 74 tests / 12 files passing, TypeScript/Vite build passing.
+- Scope: JSON rules only, no arbitrary JS or external datafeed query action. Local player navigation does not override server-authoritative network sessions. Scene navigation targets slots in the active playlist.
+
+## Scene Templates & New Scene Workflow
+
+- [x] New Scene opens a blank-versus-template choice; template choice opens a searchable, category-filtered template browser.
+- [x] Six built-in editable layouts: Corporate Welcome, Café Menu, Event Spotlight, Retail Promotion, Building Directory and Team Announcement. Each card shows a shared-renderer preview, native pixel dimensions/orientation, description and bottom Select button.
+- [x] Blank scene is genuinely empty. Template instantiation allocates fresh IDs and fits proportionally/centers on the existing project canvas without changing its resolution or stretching text.
+- [x] New scenes activate immediately and join the default playlist in one undoable persisted change; dialogs support Escape, cancel/back, focus containment/restoration and responsive scrolling.
+- [x] Tests cover New Scene integration, blank creation, browser previews/dimensions/filter/search, selection, undo, cancellation and fitting/ID independence across all layouts. Full verification: 78 tests / 13 files; production build passing.
+
+## Export Current Scene as a Template
+
+- [x] Toolbar **Export Scene Template** saves the current scene into the browser's persistent **My Templates** library and downloads a versioned `.signage-template.json` file.
+- [x] Personal templates appear in the existing browser with previews, native dimensions, search/category filtering and Select actions.
+- [x] Export includes scene settings, components, animation tracks, referenced embedded media/fonts, bound scripts and scene/multi-scene audio. Creating an instance remaps scene/component/group/track/keyframe/asset/script IDs and fits proportionally; imported dependencies and playlist insertion share one undoable change.
+- [x] Storage/quota failures produce a warning while preserving the download; missing/external media is rejected rather than silently producing a broken portable file. Library is browser/origin-local, separate from project undo/reset.
+- [x] Tests exercise toolbar download, persistence, browser reuse, dependency remapping, undo and storage failure. Verification: 81 tests / 14 files; production build passing.

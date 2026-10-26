@@ -3,6 +3,8 @@
 // Logical Reference Resolution, Rulers, Snap Guides, Resize/Rotate Handles
 // ============================================================================
 
+import { createPortal } from 'react-dom';
+import { snapResizeToGrid } from './resizeGrid';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStudioStore } from '@/store/useStudioStore';
 import { computeSceneElementsAtTime } from '@packages/animation-engine';
@@ -53,6 +55,52 @@ export const StudioCanvasWorkspace: React.FC = () => {
     timelineTimeMs,
     timelinePlaying,
   } = useStudioStore();
+
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const holdRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resizeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resizeOrigin = useRef<{ x: number; y: number } | null>(null);
+  const [gridSnapped, setGridSnapped] = useState(false);
+  const clearHold = () => {
+    if (holdRef.current) clearTimeout(holdRef.current);
+    holdRef.current = null;
+  };
+  const openContextMenu = (x: number, y: number, elementId?: string) => {
+    clearHold();
+    if (resizeTimer.current) clearTimeout(resizeTimer.current);
+    setDragState(null);
+    setSnapGuides([]);
+    if (elementId && !useStudioStore.getState().selectedElementIds.includes(elementId)) {
+      setSelectedElementIds([elementId]);
+    } else if (!elementId) setSelectedElementIds([]);
+    setContextMenu({ x: Math.max(8, Math.min(x, window.innerWidth - 216)),
+      y: Math.max(8, Math.min(y, window.innerHeight - 310)) });
+  };
+  useEffect(() => {
+    const end = () => { clearHold(); };
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+    window.addEventListener('blur', end);
+    return () => {
+      end();
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+      window.removeEventListener('blur', end);
+      if (resizeTimer.current) clearTimeout(resizeTimer.current);
+    };
+  }, []);
+  useEffect(() => {
+    if (!contextMenu) return;
+    menuRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+    const close = (e: PointerEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setContextMenu(null);
+    };
+    const escape = (e: KeyboardEvent) => { if (e.key === 'Escape') setContextMenu(null); };
+    window.addEventListener('pointerdown', close);
+    window.addEventListener('keydown', escape);
+    return () => { window.removeEventListener('pointerdown', close); window.removeEventListener('keydown', escape); };
+  }, [contextMenu]);
 
   const [dragState, setDragState] = useState<DragMode | null>(null);
   const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
@@ -142,16 +190,35 @@ export const StudioCanvasWorkspace: React.FC = () => {
           nextH = hCandidate;
         }
 
-        if (dragState.aspectLocked && dragState.origH > 0) {
+        if (dragState.aspectLocked && dragState.origH > 0 && dragState.origW > 0) {
           const ratio = dragState.origW / dragState.origH;
-          nextH = Math.max(24, Math.round(nextW / ratio));
+          const horizontal = h.includes('e') || h.includes('w');
+          const vertical = h.includes('n') || h.includes('s');
+          // Use the dominant pointer axis on corners; keep the opposite corner fixed.
+          const useWidth = horizontal && (!vertical || Math.abs(dx / dragState.origW) >= Math.abs(dy / dragState.origH));
+          nextW = Math.max(24, 24 * ratio, useWidth ? nextW : nextH * ratio);
+          nextH = nextW / ratio;
+          if (h.includes('w')) nextX = dragState.origX + dragState.origW - nextW;
+          if (h.includes('n')) nextY = dragState.origY + dragState.origH - nextH;
         }
 
-        updateElement(
-          dragState.elementId,
-          { x: nextX, y: nextY, width: nextW, height: nextH },
-          false
-        );
+        const raw = { x: nextX, y: nextY, width: nextW, height: nextH };
+        if (!resizeOrigin.current || Math.hypot(clientX - resizeOrigin.current.x, clientY - resizeOrigin.current.y) > 5) {
+          updateElement(dragState.elementId, raw, false);
+        }
+        // Restart the dwell only after meaningful movement, not pointer jitter.
+        if (!resizeOrigin.current || Math.hypot(clientX - resizeOrigin.current.x, clientY - resizeOrigin.current.y) > 5) {
+          resizeOrigin.current = { x: clientX, y: clientY };
+          if (resizeTimer.current) clearTimeout(resizeTimer.current);
+          setGridSnapped(false);
+          resizeTimer.current = setTimeout(() => {
+            if (!project.settings.snapToGrid) return;
+            updateElement(dragState.elementId, snapResizeToGrid(raw, h,
+              project.settings.gridSizePx, dragState.aspectLocked), false);
+            setGridSnapped(true);
+          }, 1800);
+        }
+
       } else if (dragState.kind === 'rotate') {
         const rect = canvasSurfaceRef.current?.getBoundingClientRect();
         if (!rect) return;
@@ -164,6 +231,22 @@ export const StudioCanvasWorkspace: React.FC = () => {
     },
     [dragState, activeScene, canvasZoom, project.settings, updateElement]
   );
+
+  useEffect(() => {
+    if (!dragState) {
+      if (resizeTimer.current) clearTimeout(resizeTimer.current);
+      resizeOrigin.current = null;
+      setGridSnapped(false);
+    }
+  }, [dragState]);
+
+  useEffect(() => {
+    if (dragState?.kind === 'resize') {
+      applyDragCoordinates(dragState.startClientX, dragState.startClientY);
+    }
+    // Initialize the dwell once per gesture, not on every project update.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dragState]);
 
   // Global window pointer listeners while dragging/resizing/rotating so wide scenes never scroll or drop pointer capture
   useEffect(() => {
@@ -185,6 +268,7 @@ export const StudioCanvasWorkspace: React.FC = () => {
     };
 
     const onWindowPointerUp = () => {
+      if (resizeTimer.current) clearTimeout(resizeTimer.current);
       setDragState(null);
       setSnapGuides([]);
       lockedScrollRef.current = null;
@@ -208,6 +292,7 @@ export const StudioCanvasWorkspace: React.FC = () => {
 
   const handlePointerUp = () => {
     if (dragState) {
+      if (resizeTimer.current) clearTimeout(resizeTimer.current);
       setDragState(null);
       setSnapGuides([]);
       lockedScrollRef.current = null;
@@ -229,6 +314,18 @@ export const StudioCanvasWorkspace: React.FC = () => {
     <div
       ref={viewportRef}
       className={`studio-canvas-viewport ${dragState ? 'canvas-drag-active' : ''}`}
+      onContextMenu={(e) => {
+        if ((e.target as HTMLElement).closest('textarea,input')) return;
+        e.preventDefault();
+        const target = (e.target as HTMLElement).closest<HTMLElement>('[data-element-id]');
+        openContextMenu(e.clientX, e.clientY, target?.dataset.elementId);
+      }}
+      onPointerDownCapture={(e) => {
+        if (e.pointerType !== 'touch' || (e.target as HTMLElement).closest('.resize-handle,.rotation-handle,textarea,input')) return;
+        clearHold();
+        const target = (e.target as HTMLElement).closest<HTMLElement>('[data-element-id]');
+        holdRef.current = setTimeout(() => openContextMenu(e.clientX, e.clientY, target?.dataset.elementId), 1500);
+      }}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onScroll={() => {
@@ -276,13 +373,27 @@ export const StudioCanvasWorkspace: React.FC = () => {
           }}
         >
           {/* Optional Grid Overlay */}
-          {showGrid && (
+          {((project.settings.gridVisible ?? showGrid) ||
+            (dragState?.kind === 'resize' && (project.settings.gridShowDuringResize ?? true)) ||
+            (dragState?.kind === 'move' && (project.settings.gridShowDuringMove ?? true))) && (
             <div
-              className="canvas-grid-overlay"
+              className={`canvas-grid-overlay ${dragState?.kind === 'resize' ? 'resize-grid-active' : ''}`}
               style={{
-                backgroundSize: `${project.settings.gridSizePx * 2}px ${project.settings.gridSizePx * 2}px`,
+                backgroundSize: `${project.settings.gridSizePx || 24}px ${project.settings.gridSizePx || 24}px`,
+                backgroundImage: 'none',
+
               }}
-            />
+            >
+              <svg width="100%" height="100%" aria-hidden="true">
+                <defs><pattern id="studio-grid-pattern" width={project.settings.gridSizePx || 24}
+                  height={project.settings.gridSizePx || 24} patternUnits="userSpaceOnUse">
+                  <path d={`M ${project.settings.gridSizePx || 24} 0 H 0 V ${project.settings.gridSizePx || 24}`}
+                    fill="none" stroke={project.settings.gridColor ?? '#94a3b8'} strokeOpacity={0.4}
+                    strokeWidth="1" strokeDasharray={project.settings.gridLineStyle === 'dashed' ? '6 4' : project.settings.gridLineStyle === 'dotted' ? '1 3' : undefined} />
+                </pattern></defs>
+                <rect width="100%" height="100%" fill="url(#studio-grid-pattern)" />
+              </svg>
+            </div>
           )}
 
           {/* Optional Broadcast Safe Area Overlay */}
@@ -309,8 +420,10 @@ export const StudioCanvasWorkspace: React.FC = () => {
             return (
               <div
                 key={el.id}
+                data-element-id={el.id}
                 style={{ touchAction: 'none', userSelect: 'none' }}
                 onPointerDown={(e) => {
+                  if (e.button !== 0) return;
                   e.stopPropagation();
                   e.preventDefault();
                   try {
@@ -330,6 +443,7 @@ export const StudioCanvasWorkspace: React.FC = () => {
 
                   if (!el.locked) {
                     const rawEl = activeScene.elements.find((item) => item.id === el.id) ?? el;
+                    useStudioStore.getState().commitProjectChange('Move Element', () => {});
                     setDragState({
                       kind: 'move',
                       elementId: el.id,
@@ -421,6 +535,7 @@ export const StudioCanvasWorkspace: React.FC = () => {
           {/* Selection Bounding Box & 8 Resize + 1 Rotate Handle */}
           {primarySelected && primarySelected.visible && (
             <div
+              data-element-id={primarySelected.id}
               className="selection-bounding-box"
               style={{
                 left: `${primarySelected.x}px`,
@@ -431,6 +546,7 @@ export const StudioCanvasWorkspace: React.FC = () => {
               }}
             >
               <div className="selection-dimension-pill">
+                {dragState?.kind === 'resize' && project.settings.snapToGrid && (gridSnapped ? '✓ Grid snapped · ' : 'Hold 1.8s to snap · ')}
                 {primarySelected.parentGroupId ? '🔗 [GROUP] ' : ''}
                 {primarySelected.name} ({Math.round(primarySelected.width)} ×{' '}
                 {Math.round(primarySelected.height)})
@@ -461,14 +577,16 @@ export const StudioCanvasWorkspace: React.FC = () => {
                   />
 
                   {/* 8 Resize Handles */}
-                  {(['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as const).map((handle) => (
+                  {(['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as const).filter(handle => !activeScene.aspectRatioLocked || handle.length === 2).map((handle) => (
                     <div
                       key={handle}
                       className={`resize-handle handle-${handle}`}
                       style={{ touchAction: 'none', userSelect: 'none' }}
                       onPointerDown={(e) => {
+                        if (e.button !== 0) return;
                         e.stopPropagation();
                         e.preventDefault();
+                        useStudioStore.getState().commitProjectChange('Resize Element', () => {});
                         try {
                           e.currentTarget.setPointerCapture(e.pointerId);
                         } catch {
@@ -484,7 +602,7 @@ export const StudioCanvasWorkspace: React.FC = () => {
                           origY: primarySelected.y,
                           origW: primarySelected.width,
                           origH: primarySelected.height,
-                          aspectLocked: primarySelected.aspectRatioLocked,
+                          aspectLocked: Boolean(activeScene.aspectRatioLocked || primarySelected.aspectRatioLocked),
                         });
                       }}
                     />
@@ -495,6 +613,37 @@ export const StudioCanvasWorkspace: React.FC = () => {
           )}
         </div>
       </div>
+
+      {contextMenu && createPortal(
+        <div ref={menuRef} role="menu" aria-label="Component actions" className="canvas-context-menu"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onContextMenu={(e) => e.preventDefault()}
+          onKeyDown={(e) => {
+            if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
+              e.preventDefault();
+              const buttons = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
+              const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+              const next = e.key === 'Home' ? 0 : e.key === 'End' ? buttons.length - 1 :
+                (index + (e.key === 'ArrowUp' ? -1 : 1) + buttons.length) % buttons.length;
+              buttons[next]?.focus();
+            }
+          }}>
+          {[
+            { label: 'Copy', action: useStudioStore.getState().copySelectedElements },
+            { label: 'Cut', action: useStudioStore.getState().cutSelectedElements },
+            { label: 'Paste', action: useStudioStore.getState().pasteElements, enabled: useStudioStore.getState().clipboardElements.length > 0 },
+            { label: 'Duplicate', action: useStudioStore.getState().duplicateSelectedElements },
+            { label: 'Delete', action: useStudioStore.getState().deleteSelectedElements },
+            { label: 'Properties', action: () => {
+              useStudioStore.getState().setRightInspectorCollapsed(false);
+              window.dispatchEvent(new Event('studio:show-properties'));
+            } },
+          ].map(({ label, action, enabled }) => (
+            <button key={label} role="menuitem" disabled={!(enabled ?? selectedElementIds.length > 0)}
+              onClick={() => { action(); setContextMenu(null); }}>{label}</button>
+          ))}
+        </div>, document.body
+      )}
 
       {/* Inline Text Editing Modal */}
       {inlineEl && inlineEl.textProps && (

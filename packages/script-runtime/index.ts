@@ -47,6 +47,8 @@ export const DEFAULT_SANDBOX_LIMITS: SandboxLimits = {
 
 function requiredPermissionForAction(actionType: ScriptAction['type']): ScriptPermission {
   switch (actionType) {
+    case 'scheduleEvent':
+      return 'timer:use';
     case 'setText':
       return 'text:write';
     case 'setVisibility':
@@ -71,6 +73,8 @@ export class RestrictedScriptRuntime {
   private activeTimers = new Set<ReturnType<typeof setTimeout>>();
   private activeEventHandlers = new Map<string, ScriptRule[]>();
   private tickCount = 0;
+  private firedRules = new Set<string>();
+  private pendingEvents: string[] = [];
   private messageTimestamps: number[] = [];
   private disposed = false;
 
@@ -105,7 +109,7 @@ export class RestrictedScriptRuntime {
   }
 
   public registerBoundedTimer(callback: () => void, delayMs: number): boolean {
-    if (this.disposed || !this.hasPermission('timer:use')) {
+    if (this.disposed || this.activeTimers.size >= 32 || !this.hasPermission('timer:use')) {
       return false;
     }
     const safeDelay = Math.max(50, Math.min(60000, delayMs));
@@ -156,6 +160,7 @@ export class RestrictedScriptRuntime {
     }
 
     const matchingRules = script.rules.filter((r) => {
+      if (r.once && this.firedRules.has(r.id)) return false;
       if (r.hook !== hook) return false;
       if (hook === 'onEvent' && r.eventName && r.eventName !== context.eventName) return false;
       return true;
@@ -192,6 +197,7 @@ export class RestrictedScriptRuntime {
         if (!condMet) continue;
       }
 
+      if (rule.once) this.firedRules.add(rule.id);
       for (const action of rule.actions) {
         operationsExecuted++;
         if (operationsExecuted > this.limits.maxOperationsPerInvoke) {
@@ -212,6 +218,14 @@ export class RestrictedScriptRuntime {
           break;
         }
 
+        if (action.type === 'scheduleEvent') {
+          if (typeof action.eventName !== 'string' || !action.eventName || !Number.isFinite(action.delayMs) ||
+              !this.registerBoundedTimer(() => { if (this.pendingEvents.length < 32) this.pendingEvents.push(action.eventName!); }, action.delayMs!)) {
+            errors.push('Invalid timer or timer limit reached (32).');
+          }
+          this.messageTimestamps.push(now);
+          continue;
+        }
         // Validate message structure before emitting to host
         if (
           (action.type === 'setText' ||
@@ -256,7 +270,14 @@ export class RestrictedScriptRuntime {
     };
   }
 
+  public drainEvents(): string[] {
+    const events = this.pendingEvents.splice(0);
+    return events;
+  }
+
   public cleanupSceneResources(): void {
+    this.pendingEvents = [];
+    this.firedRules.clear();
     for (const timer of this.activeTimers) {
       clearTimeout(timer);
     }

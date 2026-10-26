@@ -29,3 +29,28 @@ A browser webpage alone cannot prevent OS-level window switching (`Alt+Tab`, `Ct
 - The watchdog monitors heartbeat signals from the playback renderer every 2 seconds.
 - If the renderer stalls or crashes, the watchdog restarts playback using the last known-good `.signage` package from the atomic cache.
 - If 3 consecutive restarts fail within 60 seconds, the player marks the current package as quarantined, falls back to the configured default package/playlist, or enters a safe recovery screen to prevent infinite restart loops.
+
+---
+
+## 7. Finding the Management Server on a Windows LAN
+
+`apps/desktop-host/windows-kiosk-provision.ps1` accepts a `-ServerUrl` (default `https://signage-control.local:4000`). Instead of guessing the address, technicians can discover the live server with the dependency-free scanner:
+
+```powershell
+# Auto-detect local subnets and print the server URL
+.\tools\windows\Find-SignageServer.ps1 -Quiet -First
+
+# Explicit subnet, JSON output (pipe into provisioning)
+$server = .\tools\windows\Find-SignageServer.ps1 -Subnet 192.168.1.0/24 -Json | ConvertFrom-Json
+if ($server.servers.Count -gt 0) {
+    .\apps\desktop-host\windows-kiosk-provision.ps1 -ServerUrl $server.servers[0].baseUrl
+}
+```
+
+Or from `cmd.exe`:
+
+```bat
+tools\windows\find-signage-server.cmd --subnet 192.168.1.0/24 --quiet --first
+```
+
+The scanner probes inbound TCP 4000 on the server (allow this on the server's Windows Firewall Private/Domain profile) and then verifies `GET /api/v1/discovery`. It reports `0` when a signage server is found, `1` when the scan completes without a match, and `2` for invalid arguments. For HTTPS reverse proxies use `--https --port 443` (and `--insecure` only with self-signed lab certificates). See `tools/network-scanner/README.md` for the full option list.

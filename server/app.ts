@@ -44,6 +44,11 @@ import {
 } from '@packages/fleet-operations';
 import type { WebSocket } from 'ws';
 
+/** Stable service identifier returned by the unauthenticated LAN discovery endpoint. */
+export const SIGNAGE_DISCOVERY_SERVICE_ID = 'digital-signage-studio';
+export const SIGNAGE_DISCOVERY_PROTOCOL_VERSION = 1;
+export const SIGNAGE_DISCOVERY_PATH = '/api/v1/discovery';
+
 export const SUPPORTED_COMMANDS = new Set([
   'STATUS_REQUEST',
   'REFRESH_CONFIGURATION',
@@ -157,6 +162,62 @@ export async function buildServerApp(
 
     return { authorized: true, actorId: actorHeader, role: roleHeader };
   }
+
+  // ==========================================================================
+  // 0. LAN Discovery Contract (unauthenticated, secret-free)
+  // Used by tools/network-scanner + tools/windows to find this server on a LAN.
+  // ==========================================================================
+
+  app.get(SIGNAGE_DISCOVERY_PATH, async (req) => {
+    const forwardedProto = req.headers['x-forwarded-proto'];
+    const forwarded = Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto;
+    const socketEncrypted = (req.raw.socket as { encrypted?: boolean } | undefined)?.encrypted === true;
+    const scheme = (forwarded && forwarded.split(',')[0].trim()) || (socketEncrypted ? 'https' : 'http');
+    const authority = String(req.headers.host || '').trim() || `localhost:${Number(process.env.PORT || 4000)}`;
+
+    let hostname = 'localhost';
+    let port = scheme === 'https' ? 443 : 80;
+    try {
+      const parsed = new URL(`${scheme}://${authority}`);
+      hostname = parsed.hostname.replace(/^\[|\]$/g, '');
+      port = parsed.port ? Number(parsed.port) : scheme === 'https' ? 443 : 80;
+    } catch {
+      // Keep safe defaults if a malformed Host header is supplied.
+    }
+
+    return {
+      service: SIGNAGE_DISCOVERY_SERVICE_ID,
+      protocolVersion: SIGNAGE_DISCOVERY_PROTOCOL_VERSION,
+      instanceId: `srv-${sha256Hex(store.storageDir || process.cwd()).slice(0, 16)}`,
+      displayName: 'Digital Signage Studio Management Server',
+      applicationVersion: '1.0.0',
+      serverTimeUtc: new Date().toISOString(),
+      scheme,
+      hostname,
+      port,
+      authority,
+      baseUrl: `${scheme}://${authority}`,
+      secure: scheme === 'https',
+      requiresAuthentication: false,
+      endpoints: {
+        discovery: SIGNAGE_DISCOVERY_PATH,
+        overview: '/api/v1/server/overview',
+        diagnostics: '/api/v1/diagnostics',
+        operations: '/api/v1/operations/summary',
+        websocket: '/ws',
+      },
+      features: [
+        'network-sync',
+        'device-enrollment',
+        'package-repository',
+        'playlists-schedules',
+        'synchronized-sessions',
+        'clock-sync',
+        'remote-commands',
+        'fleet-operations',
+      ],
+    };
+  });
 
   // ==========================================================================
   // 1. Server Overview & Clock Synchronization

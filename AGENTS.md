@@ -39,6 +39,9 @@ Whenever you complete a feature, fix a bug, or alter an interface, **update both
 │   └── fleet-operations/      # Proof-of-play, fleet health alerts, verified backups & retention
 ├── apps/
 │   └── desktop-host/          # Electron/Tauri kiosk window policy & Linux systemd unit
+├── tools/                     # Standalone operator CLIs (no third-party runtime deps)
+│   ├── network-scanner/       # LAN discovery helpers + dependency-free Node CLI + README
+│   └── windows/               # find-signage-server.cmd launcher & Find-SignageServer.ps1 wrapper
 ├── server/                    # Fastify + WebSocket + SQLite Network Management Server
 │   ├── db.ts                  # SQLite schema (20 tables), content-addressed store & seed data
 │   ├── app.ts                 # Fastify REST endpoints (/api/v1/* incl. /operations/*) & WebSocket gateway (/ws)
@@ -55,9 +58,9 @@ Whenever you complete a feature, fix a bug, or alter an interface, **update both
 │   ├── App.tsx                # Unified 5-mode shell & global keyboard shortcuts
 │   └── styles.css             # Dark/Light studio & broadcast UI theme
 └── tests/                     # Automated Vitest suites
-    ├── unit/                  # Project model, editor core, animation, enterprise & fleet-ops tests
+    ├── unit/                  # Project model, editor core, animation, enterprise, fleet-ops & LAN discovery tests
     ├── archive-fuzz/          # .signage binary round-trip, corruption, bomb, fuzz & script sandbox
-    ├── integration/           # 19-step E2E, 10 Network Sync Acceptance & Phase 15 Fleet Ops API tests
+    ├── integration/           # 19-step E2E, 10 Sync Acceptance, Phase 15 Fleet Ops & LAN discovery tests
     └── browser/               # React Testing Library UI mode & interaction tests
 ```
 
@@ -80,6 +83,9 @@ npm run dev:server
 
 # Start the Vite React frontend server (binds to 0.0.0.0:5173, proxies /api and /ws -> 4000)
 npm run dev
+
+# Find the signage server on the LAN (Windows: tools\windows\find-signage-server.cmd)
+npm run scan:server -- --subnet 192.168.1.0/24 --json
 ```
 
 ---
@@ -94,6 +100,7 @@ npm run dev
 6. **Zero Script Execution During Validation**: `validateSignageArchive` must remain strictly side-effect-free.
 7. **No Environment APIs in `@packages/fleet-operations`**: Proof-of-play aggregation, health grading, alert IDs, backup checksums and retention must stay pure TypeScript (no React, `node:sqlite`, `fs` or DOM globals) so the Fastify server, the static Pages simulator and the React console compute identical results.
 8. **Never Restore Secrets**: Operational backups must exclude `users` / `device_credentials`, redact secret-like columns, verify every SHA-256 checksum before restore, and only write to the four whitelisted telemetry tables.
+9. **Discovery Is Identity-Only**: `GET /api/v1/discovery` must stay unauthenticated, side-effect-free and secret-free. LAN scanners must verify the full service descriptor — never treat an open port 4000 as proof of a signage server.
 
 ---
 
@@ -127,3 +134,10 @@ npm run dev
 - **Deterministic alerts**: Alert IDs hash `ruleId|deviceId|cooldownBucket`; `saveFleetAlerts` uses `INSERT OR IGNORE` so acknowledgements survive repeated health evaluations.
 - **Static Pages parity**: Any new `/api/v1/operations/*` endpoint needs a matching branch in `src/services/staticServerSimulator.ts` (parse `urlPath.split('?')` first — the fallback router otherwise matches only exact paths).
 - **Offline UI demo**: `NetworkManagementView.tsx` computes its fallback snapshot from `@packages/fleet-operations`, so headless/jsdom UI tests stay deterministic without a backend.
+
+### 4.7 Phase 16 LAN Discovery Gotchas
+- **Keep the CLI dependency-free**: `tools/network-scanner/*.mjs` uses only Node built-ins so `find-signage-server.cmd` works on a technician laptop with just Node 18+ installed — no `npm install`.
+- **Pure helpers live in `discovery-core.mjs`**: CIDR math, target resolution, URL building, descriptor validation, arg parsing and bounded concurrency are unit-tested; the CLI only adds sockets and HTTP.
+- **`resolveScanTargets` fallback**: when no usable IPv4 NIC is detected (CI/headless hosts), scanning falls back to `127.0.0.1/32` with a warning. This path was extracted after a `const` reassignment bug — don't inline it back into the CLI.
+- **Windows wrappers are thin**: `Find-SignageServer.ps1` and `find-signage-server.cmd` delegate to the Node CLI. `pwsh` is unavailable in the Linux sandbox, so keep PowerShell syntax minimal and rely on the Node integration tests for behavior.
+- **Vitest now includes `.mjs` tests**: `vite.config.ts` `test.include` is `tests/**/*.test.{ts,tsx,mjs}`.

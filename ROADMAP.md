@@ -1,6 +1,6 @@
 # Digital Signage Studio — Phased Implementation Roadmap (`ROADMAP.md`)
 
-This document tracks the end-to-end engineering roadmap for **Digital Signage Studio**, covering Phases 1–7 from the Core Specification, Phases 8–13 from the Network Synchronization Addendum (`PROMPT.md`), and Phases 14–15 optional enterprise/fleet-operations extensions.
+This document tracks the end-to-end engineering roadmap for **Digital Signage Studio**, covering Phases 1–7 from the Core Specification, Phases 8–13 from the Network Synchronization Addendum (`PROMPT.md`), and Phases 14–16 optional enterprise, fleet-operations and LAN-discovery extensions.
 
 ---
 
@@ -24,6 +24,7 @@ This document tracks the end-to-end engineering roadmap for **Digital Signage St
 | **13** | Reliability, Persistence & Security Hardening | **COMPLETED** | `server/db.ts`, `server/app.ts` (`/api/v1/commands`, `/api/v1/audit-log`) | `tests/integration/essential-e2e-and-sync.test.ts` (Tests 4, 5, 7, 9, 10) |
 | **14** | Enterprise Extensions (Delta Patch, Desktop Installers, S3/Postgres Adapters) | **COMPLETED** | `packages/signage-format/`, `apps/desktop-host/`, `server/adapters/storage-adapter.ts` | `tests/unit/enterprise-phase14.test.ts` |
 | **15** | Fleet Operations (Proof-of-Play, Health Alerts, Verified Backups) | **COMPLETED** | `packages/fleet-operations/`, `server/db.ts`, `server/app.ts` (`/api/v1/operations/*`), `src/components/network/NetworkManagementView.tsx`, `src/services/staticServerSimulator.ts` | `tests/unit/phase15-fleet-operations.test.ts`, `tests/integration/phase15-fleet-operations.test.ts`, `tests/browser/studio-ui.test.tsx` |
+| **16** | Windows CLI LAN Discovery Scanner | **COMPLETED** | `server/app.ts` (`/api/v1/discovery`), `tools/network-scanner/`, `tools/windows/`, `src/services/staticServerSimulator.ts` | `tests/unit/network-discovery.test.mjs`, `tests/integration/network-discovery.test.mjs` |
 
 ---
 
@@ -158,3 +159,15 @@ This document tracks the end-to-end engineering roadmap for **Digital Signage St
 - [x] **Network Console "Fleet Operations" Tab**: Added a sixth Network Management tab with health KPIs, proof-of-play filtering (Today / 7 days / All; group by scene, device+scene, device or UTC day), daily display-time bars, per-device health states and FPS sparklines, editable alert rules, active alert acknowledgement, verified backup create/verify/restore/download, retention controls, and telemetry-injection diagnostics (offline, stalled, +780 ms drift, healthy recovery).
 - [x] **Static GitHub Pages Parity**: Extended `src/services/staticServerSimulator.ts` with an in-memory implementation of every `/api/v1/operations/*` endpoint using the same pure-TS package (including seeded stale-heartbeat/drift alerts), plus a deterministic offline UI demo fallback so the console remains interactive without any backend.
 - [x] **Verification**: Added `tests/unit/phase15-fleet-operations.test.ts` (8 tests: normalization, overlap-safe aggregation, alert determinism, backup tamper detection, retention), `tests/integration/phase15-fleet-operations.test.ts` (5 API tests: seeded telemetry, idempotent ingest, alert lifecycle, RBAC, backup/restore/retention) and a new browser UI test in `tests/browser/studio-ui.test.tsx`; `npm test` = 43/43 passing, `npm run build` = clean.
+---
+
+## Phase 16: Windows CLI LAN Discovery Scanner — [COMPLETED]
+
+**Objective:** Let a Windows technician locate the Digital Signage Studio management server on a LAN from `cmd.exe` or PowerShell, without hardcoding an IP address and without mistaking an unrelated service on port 4000 for a signage server.
+
+- [x] **Discovery Contract (`server/app.ts`, `src/services/staticServerSimulator.ts`)**: Added an unauthenticated, secret-free `GET /api/v1/discovery` endpoint returning `service = "digital-signage-studio"`, `protocolVersion`, stable `instanceId`, display name/version, UTC server time, scheme/host/port/base URL, endpoint paths, and feature flags. Exported `SIGNAGE_DISCOVERY_SERVICE_ID` / `SIGNAGE_DISCOVERY_PROTOCOL_VERSION` / `SIGNAGE_DISCOVERY_PATH`; mirrored the contract in the static Pages simulator and logged the endpoint on server startup.
+- [x] **Pure Discovery Helpers (`tools/network-scanner/discovery-core.mjs`)**: Implemented IPv4/CIDR math, host/range expansion, local NIC subnet enumeration, URL building, service-descriptor validation, bounded-concurrency mapping, CLI argument parsing and a loopback fallback when no LAN NIC is usable — all dependency-free and unit-testable.
+- [x] **Dependency-Free CLI (`tools/network-scanner/find-signage-server.mjs`)**: Auto-detects local IPv4 subnets (or accepts `--subnet` overrides), concurrently TCP-probes the configured port, verifies open ports via `GET /api/v1/discovery`, and emits human, JSON or quiet output with deterministic exit codes (0 found / 1 not found / 2 invalid usage). Supports `--port`, `--scheme`/`--https`, timeouts, concurrency, `--max-hosts` safety cap, `--first`, `--no-tcp-probe`, `--insecure`, link-local/loopback/network-broadcast toggles and a custom `--service-id`.
+- [x] **Windows Entry Points (`tools/windows/`)**: Added `find-signage-server.cmd` (cmd.exe launcher) and `Find-SignageServer.ps1` (PowerShell cmdlet-style front-end with `-Subnet`, `-Json`, `-First`, `-Https`, `-Insecure`, etc.), plus `npm run scan:server` for cross-platform use.
+- [x] **Documentation**: Added `tools/network-scanner/README.md` (usage, output modes, arguments, exit codes, firewall notes), plus architecture/kiosk/security notes for the discovery contract.
+- [x] **Verification**: Added `tests/unit/network-discovery.test.mjs` (11 tests: IPv4 math, CIDR/range expansion, URL building, descriptor validation, CLI parsing, fallback, concurrency) and `tests/integration/network-discovery.test.mjs` (5 tests: descriptor shape, real server discovery via child-process CLI, decoy HTTP rejection, auto-detect handling, invalid arguments). `npm test` = 59/59 passing, `npm run build` = clean, and the GitHub Actions `npm test` + `build:pages` job passes on the pushed branch (the auto-detect test tolerates CI Docker `/16` bridges via the `--max-hosts` safety cap).

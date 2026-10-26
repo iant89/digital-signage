@@ -15,6 +15,7 @@ async function main() {
 
   await app.listen({ port: PORT, host: HOST });
   console.log(`Signage Management Server listening on http://${HOST}:${PORT}`);
+  console.log(`LAN discovery endpoint: GET http://${HOST}:${PORT}/api/v1/discovery`);
 }
 
 main().catch((err) => {

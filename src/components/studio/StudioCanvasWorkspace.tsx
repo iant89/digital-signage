@@ -1,3 +1,4 @@
+import { getSelectionBounds, resizeFromSelectionBounds } from './selectionGeometry';
 import { RotationGuide, snapRotation } from './rotationGuide';
 // ============================================================================
 // src/components/studio/StudioCanvasWorkspace.tsx — Interactive Visual Canvas
@@ -33,6 +34,9 @@ type DragMode =
       origY: number;
       origW: number;
       origH: number;
+      rotation: number;
+      scaleX: number;
+      scaleY: number;
       aspectLocked: boolean;
     }
   | {
@@ -144,6 +148,8 @@ export const StudioCanvasWorkspace: React.FC = () => {
     return activeScene.elements.find((e) => e.id === selectedElementIds[0]) ?? null;
   }, [activeScene, selectedElementIds]);
 
+  const selectionBounds = primarySelected ? getSelectionBounds(primarySelected) : null;
+
   const applyDragCoordinates = useCallback(
     (clientX: number, clientY: number) => {
       if (!dragState || !activeScene) return;
@@ -183,38 +189,16 @@ export const StudioCanvasWorkspace: React.FC = () => {
       } else if (dragState.kind === 'resize') {
         const dx = (clientX - dragState.startClientX) / canvasZoom;
         const dy = (clientY - dragState.startClientY) / canvasZoom;
-        let nextX = dragState.origX;
-        let nextY = dragState.origY;
-        let nextW = dragState.origW;
-        let nextH = dragState.origH;
-
         const h = dragState.handle;
-        if (h.includes('e')) nextW = Math.max(24, Math.round(dragState.origW + dx));
-        if (h.includes('s')) nextH = Math.max(24, Math.round(dragState.origH + dy));
-        if (h.includes('w')) {
-          const wCandidate = Math.max(24, Math.round(dragState.origW - dx));
-          nextX = Math.round(dragState.origX + (dragState.origW - wCandidate));
-          nextW = wCandidate;
-        }
-        if (h.includes('n')) {
-          const hCandidate = Math.max(24, Math.round(dragState.origH - dy));
-          nextY = Math.round(dragState.origY + (dragState.origH - hCandidate));
-          nextH = hCandidate;
-        }
-
-        if (dragState.aspectLocked && dragState.origH > 0 && dragState.origW > 0) {
-          const ratio = dragState.origW / dragState.origH;
-          const horizontal = h.includes('e') || h.includes('w');
-          const vertical = h.includes('n') || h.includes('s');
-          // Use the dominant pointer axis on corners; keep the opposite corner fixed.
-          const useWidth = horizontal && (!vertical || Math.abs(dx / dragState.origW) >= Math.abs(dy / dragState.origH));
-          nextW = Math.max(24, 24 * ratio, useWidth ? nextW : nextH * ratio);
-          nextH = nextW / ratio;
-          if (h.includes('w')) nextX = dragState.origX + dragState.origW - nextW;
-          if (h.includes('n')) nextY = dragState.origY + dragState.origH - nextH;
-        }
-
-        const raw = { x: nextX, y: nextY, width: nextW, height: nextH };
+        const original = { x: dragState.origX, y: dragState.origY, width: dragState.origW,
+          height: dragState.origH, rotation: dragState.rotation, scaleX: dragState.scaleX, scaleY: dragState.scaleY };
+        const bounds = getSelectionBounds(original);
+        const desired = { ...bounds };
+        if (h.includes('e')) desired.width = Math.max(24, bounds.width + dx);
+        if (h.includes('s')) desired.height = Math.max(24, bounds.height + dy);
+        if (h.includes('w')) { desired.width = Math.max(24, bounds.width - dx); desired.x = bounds.x + bounds.width - desired.width; }
+        if (h.includes('n')) { desired.height = Math.max(24, bounds.height - dy); desired.y = bounds.y + bounds.height - desired.height; }
+        const raw = resizeFromSelectionBounds(original, desired, h, dragState.aspectLocked);
         if (!resizeOrigin.current || Math.hypot(clientX - resizeOrigin.current.x, clientY - resizeOrigin.current.y) > 5) {
           updateElement(dragState.elementId, raw, false);
         }
@@ -225,8 +209,10 @@ export const StudioCanvasWorkspace: React.FC = () => {
           setGridSnapped(false);
           resizeTimer.current = setTimeout(() => {
             if (!project.settings.snapToGrid) return;
-            updateElement(dragState.elementId, snapResizeToGrid(raw, h,
-              project.settings.gridSizePx, dragState.aspectLocked), false);
+            const snappedBounds = snapResizeToGrid(getSelectionBounds({ ...original, ...raw }), h,
+              project.settings.gridSizePx, dragState.aspectLocked);
+            updateElement(dragState.elementId,
+              resizeFromSelectionBounds(original, snappedBounds, h, dragState.aspectLocked), false);
             setGridSnapped(true);
           }, 1800);
         }
@@ -503,11 +489,10 @@ export const StudioCanvasWorkspace: React.FC = () => {
                 className="group-sibling-bounding-box"
                 style={{
                   position: 'absolute',
-                  left: `${el.x}px`,
-                  top: `${el.y}px`,
-                  width: `${el.width}px`,
-                  height: `${el.height}px`,
-                  transform: `rotate(${el.rotation || 0}deg)`,
+                  left: `${getSelectionBounds(el).x}px`,
+                  top: `${getSelectionBounds(el).y}px`,
+                  width: `${getSelectionBounds(el).width}px`,
+                  height: `${getSelectionBounds(el).height}px`,
                   border: '2px dashed #38bdf8',
                   borderRadius: '4px',
                   pointerEvents: 'none',
@@ -552,21 +537,21 @@ export const StudioCanvasWorkspace: React.FC = () => {
 
           {dragState?.kind === 'rotate' && primarySelected && (
             <RotationGuide x={dragState.centerX} y={dragState.centerY}
-              angle={snapRotation(primarySelected.rotation || 0)} zoom={canvasZoom} />
+              angle={((primarySelected.rotation || 0) % 360 + 360) % 360} zoom={canvasZoom} />
           )}
 
           {/* Selection Bounding Box & 8 Resize + 1 Rotate Handle */}
-          {primarySelected && primarySelected.visible && (
+          {primarySelected && primarySelected.visible && selectionBounds && (
             <div
               data-element-id={primarySelected.id}
               className="selection-bounding-box"
               style={{
-                left: `${primarySelected.x}px`,
-                top: `${primarySelected.y}px`,
-                width: `${primarySelected.width}px`,
-                height: `${primarySelected.height}px`,
-                transform: `rotate(${primarySelected.rotation || 0}deg)`,
-              }}
+                '--handle-unit': `${1 / canvasZoom}px`,
+                left: `${selectionBounds.x}px`,
+                top: `${selectionBounds.y}px`,
+                width: `${selectionBounds.width}px`,
+                height: `${selectionBounds.height}px`,
+              } as React.CSSProperties}
             >
               <div className="selection-dimension-pill">
                 {dragState?.kind === 'resize' && project.settings.snapToGrid && (gridSnapped ? '✓ Grid snapped · ' : 'Hold 1.8s to snap · ')}
@@ -577,7 +562,8 @@ export const StudioCanvasWorkspace: React.FC = () => {
 
               {!primarySelected.locked && (
                 <>
-                  {/* Rotation Handle */}
+                  {/* Non-interactive stem; the hit target is centered on its outer end. */}
+                  <div className="rotation-handle-stem" aria-hidden="true" />
                   <div
                     className="rotation-handle"
                     title="Drag to Rotate"
@@ -627,6 +613,9 @@ export const StudioCanvasWorkspace: React.FC = () => {
                           origY: primarySelected.y,
                           origW: primarySelected.width,
                           origH: primarySelected.height,
+                          rotation: primarySelected.rotation || 0,
+                          scaleX: primarySelected.scaleX ?? 1,
+                          scaleY: primarySelected.scaleY ?? 1,
                           aspectLocked: Boolean(activeScene.aspectRatioLocked || primarySelected.aspectRatioLocked),
                         });
                       }}

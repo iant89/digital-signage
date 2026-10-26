@@ -1,10 +1,10 @@
 import React from 'react';
 
-/** Normalize clockwise degrees and magnetize inclusive ±5° bands around each 45°. */
+/** Step through 5° ticks, with inclusive ±10° magnetic bands around each 45°. */
 export function snapRotation(degrees: number): number {
   const angle = ((degrees % 360) + 360) % 360;
   const nearest = Math.round(angle / 45) * 45;
-  return Math.abs(angle - nearest) <= 5 + 1e-8 ? nearest % 360 : Math.round(angle) % 360;
+  return Math.abs(angle - nearest) <= 10 + 1e-8 ? nearest % 360 : (Math.round(angle / 5) * 5) % 360;
 }
 
 export const RotationGuide: React.FC<{ x: number; y: number; angle: number; zoom: number }> = ({ x, y, angle, zoom }) => {

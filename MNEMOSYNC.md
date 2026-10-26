@@ -297,3 +297,24 @@
 - Fixed outside-press dismissal listener to use window pointerdown capture (including symmetric cleanup). Component drag/resize handlers stop bubbling, which previously kept an open menu visible when pressing a component.
 - Menu-contained presses are still ignored by outside dismissal; actions continue to close the menu normally. Regression covers mouse/touch component presses and menu-item pointerdown preservation.
 - Verification: 87 tests / 14 files passing; production build passes with existing chunk-size warning.
+
+### [2026-10-26] Upright outer bounding boxes on rotated components
+
+- Branch `arena/40a6667c-digital-signage`: added `selectionGeometry.ts` helpers to compute exact transformed rectangle envelopes: outer width = |cos θ|·scaledWidth + |sin θ|·scaledHeight, and analogous height, centered on authored transform origin.
+- Primary selection bounding box no longer rotates; its dimensions/position follow the envelope, so handles sit at screen-aligned outside edges/corners. Multi-selection/group sibling outlines use the same geometry. Renderer/component rotation remains unchanged and rotation protractor remains centered.
+- Resize gestures capture original angle/scales and convert desired envelope dimensions back to local width/height, retaining opposite envelope edges and minimum local dimensions. At/near diagonal angles the inverse envelope equations are singular; use proportional resizing there (also when aspect locked) to avoid jumps/exploding dimensions. Grid dwell snaps the visible envelope before converting back.
+- Added unit coverage for all transformed corners at multiple angles and signed/nonuniform scales, 90° screen-right resizing, diagonal stability/opposite anchors; UI regression covers outer box, eight handles, rotation preservation and undo.
+- Verification: 91 tests / 15 files pass; TypeScript/Vite production build passes with the existing chunk-size warning.
+
+### [2026-10-26] Tick-aligned rotation and stronger 45° magnets
+
+- Updated `snapRotation` to quantize ordinary rotation to the guide's 5° ticks. Major 45° stops now hold within inclusive ±10° raw pointer angle, twice the previous ±5° window.
+- Protractor readout now normalizes the stored angle directly rather than snapping it a second time; prevents displayed angle differing from actual geometry when just outside a major-stop window.
+- Regression covers all eight widened windows, releases and tick quantization across negative/positive multiple turns. All 91 tests / 15 files pass; production build passes with existing bundle-size warning.
+
+### [2026-10-26] Longer offset rotation stem and enlarged touch hitboxes
+
+- Rotation handle now sits at 25% along the upright top selection edge (halfway between left corner and center), 84 screen pixels outward versus roughly 28px previous center reach. Added noninteractive visible stem.
+- Grabbers use transparent outer pointer targets with pseudo-element visual marks: resize 32px hitbox / 16px visual, rotation 40px / 20px. Coarse-pointer devices use minimum 48px targets. Inverse-zoom CSS custom property on the selection box keeps these screen-space sizes usable when zoomed out.
+- Canvas surface permits editor controls outside scene bounds; authored content is clipped in its isolated content layer, preventing extended stems from being cut off near the top edge.
+- Verification: 92 tests / 15 files pass; production TypeScript/Vite build passes with existing bundle-size warning. UI regression checks inverse zoom unit, stem structure, handles and rotation gesture initiation. Physical mobile hit testing remains recommended.

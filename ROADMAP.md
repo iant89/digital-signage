@@ -1,6 +1,6 @@
 # Digital Signage Studio — Phased Implementation Roadmap (`ROADMAP.md`)
 
-This document tracks the end-to-end engineering roadmap for **Digital Signage Studio**, covering Phases 1–7 from the Core Specification and Phases 8–13 from the Network Synchronization Addendum (`PROMPT.md`), along with future optional enhancements.
+This document tracks the end-to-end engineering roadmap for **Digital Signage Studio**, covering Phases 1–7 from the Core Specification, Phases 8–13 from the Network Synchronization Addendum (`PROMPT.md`), and Phases 14–15 optional enterprise/fleet-operations extensions.
 
 ---
 
@@ -23,6 +23,7 @@ This document tracks the end-to-end engineering roadmap for **Digital Signage St
 | **12** | Network Management UI & Video Wall Simulator | **COMPLETED** | `src/components/network/NetworkManagementView.tsx` | `tests/browser/studio-ui.test.tsx` |
 | **13** | Reliability, Persistence & Security Hardening | **COMPLETED** | `server/db.ts`, `server/app.ts` (`/api/v1/commands`, `/api/v1/audit-log`) | `tests/integration/essential-e2e-and-sync.test.ts` (Tests 4, 5, 7, 9, 10) |
 | **14** | Enterprise Extensions (Delta Patch, Desktop Installers, S3/Postgres Adapters) | **COMPLETED** | `packages/signage-format/`, `apps/desktop-host/`, `server/adapters/storage-adapter.ts` | `tests/unit/enterprise-phase14.test.ts` |
+| **15** | Fleet Operations (Proof-of-Play, Health Alerts, Verified Backups) | **COMPLETED** | `packages/fleet-operations/`, `server/db.ts`, `server/app.ts` (`/api/v1/operations/*`), `src/components/network/NetworkManagementView.tsx`, `src/services/staticServerSimulator.ts` | `tests/unit/phase15-fleet-operations.test.ts`, `tests/integration/phase15-fleet-operations.test.ts`, `tests/browser/studio-ui.test.tsx` |
 
 ---
 
@@ -142,3 +143,18 @@ This document tracks the end-to-end engineering roadmap for **Digital Signage St
 
 
 
+---
+
+## Phase 15: Fleet Operations — [COMPLETED]
+
+**Objective:** Close the remaining operations gaps in Spec Sections 20, 32, 33 and 34 — player health monitoring, playback-state monitoring, network diagnostics, database backups and audit retention — with a fully testable, offline-capable subsystem that works both against the Fastify/SQLite server and on static GitHub Pages.
+
+- [x] **Pure-TS Fleet Operations Domain Package (`packages/fleet-operations/`)**: Added `normalizePlaybackEvents`, `aggregateProofOfPlay`, `evaluateFleetHealth`, `summarizeHealthHistory`, `buildBackupArchive`, `verifyBackupArchive`, `applyRetention`, `redactBackupRow`, deterministic demo telemetry generators, 6 default alert rules and configurable health thresholds — zero React/Node/DOM dependencies so it runs in the server, browser, workers and Vitest.
+- [x] **De-duplicated Proof-of-Play**: Added append-only `playback_events` storage with idempotent `event_key` ingestion (offline batch replay safe), bounded batch limits, window clipping, per-device interval merging (one screen = one timeline), scene/device/day grouping, dwell vs. unique display time, completion ratios and offline-buffered counters.
+- [x] **Heartbeat Health Grading & Alert Rules**: Added `health_samples`, `alert_rules` and `fleet_alerts` tables, `HEALTHY`/`DEGRADED`/`CRITICAL`/`OFFLINE` grading from heartbeat staleness, drift, FPS, render errors, stalled playback and failed commands, plus deterministic cooldown-bucketed alert IDs (no alert storms), acknowledgement idempotency and editable rule thresholds/severity/enabled state.
+- [x] **Verified Backups & Restore**: Added SHA-256 manifest backups that exclude credential tables, redact secret-like columns, sort rows canonically, and recompute every table checksum plus the manifest checksum before restore; restore is limited to operational telemetry tables and is rejected with `INTEGRITY_CHECK_FAILED` on any tampering.
+- [x] **Audit & Telemetry Retention**: Added deterministic age + row-count pruning for playback events, health samples, alerts, events and audit log with pinned active alerts, exposed through an admin-only `POST /api/v1/operations/retention` endpoint and audited in `audit_log`.
+- [x] **Fleet Operations REST API (`server/app.ts`)**: Added `/api/v1/operations/summary`, `/proof-of-play`, `/playback-events`, `/health`, `/health-samples`, `/alerts`, `/alerts/:id/acknowledge`, `/alert-rules`, `/backups`, `/backups/:id`, `/backups/:id/restore` and `/retention`, with RBAC (device ingest vs. operator read vs. admin mutation), WebSocket broadcasts, audit logging and new fleet KPIs in `/api/v1/server/overview`.
+- [x] **Network Console "Fleet Operations" Tab**: Added a sixth Network Management tab with health KPIs, proof-of-play filtering (Today / 7 days / All; group by scene, device+scene, device or UTC day), daily display-time bars, per-device health states and FPS sparklines, editable alert rules, active alert acknowledgement, verified backup create/verify/restore/download, retention controls, and telemetry-injection diagnostics (offline, stalled, +780 ms drift, healthy recovery).
+- [x] **Static GitHub Pages Parity**: Extended `src/services/staticServerSimulator.ts` with an in-memory implementation of every `/api/v1/operations/*` endpoint using the same pure-TS package (including seeded stale-heartbeat/drift alerts), plus a deterministic offline UI demo fallback so the console remains interactive without any backend.
+- [x] **Verification**: Added `tests/unit/phase15-fleet-operations.test.ts` (8 tests: normalization, overlap-safe aggregation, alert determinism, backup tamper detection, retention), `tests/integration/phase15-fleet-operations.test.ts` (5 API tests: seeded telemetry, idempotent ingest, alert lifecycle, RBAC, backup/restore/retention) and a new browser UI test in `tests/browser/studio-ui.test.tsx`; `npm test` = 43/43 passing, `npm run build` = clean.

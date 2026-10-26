@@ -35,12 +35,13 @@ Whenever you complete a feature, fix a bug, or alter an interface, **update both
 │   ├── playlist-engine/       # Playlist timeline builder & deterministic schedule resolution
 │   ├── playback-engine/       # Authoritative timeline, NTP clock sync, drift control, atomic cache
 │   ├── kiosk-integration/     # Salted SHA-256 admin auth, maintenance timer, WatchdogSupervisor
-│   └── diagnostics/           # Structured diagnostic logger with automatic secret redaction
+│   ├── diagnostics/           # Structured diagnostic logger with automatic secret redaction
+│   └── fleet-operations/      # Proof-of-play, fleet health alerts, verified backups & retention
 ├── apps/
 │   └── desktop-host/          # Electron/Tauri kiosk window policy & Linux systemd unit
 ├── server/                    # Fastify + WebSocket + SQLite Network Management Server
-│   ├── db.ts                  # SQLite schema (15 tables), content-addressed store & seed data
-│   ├── app.ts                 # Fastify REST endpoints (/api/v1/*) & WebSocket gateway (/ws)
+│   ├── db.ts                  # SQLite schema (20 tables), content-addressed store & seed data
+│   ├── app.ts                 # Fastify REST endpoints (/api/v1/* incl. /operations/*) & WebSocket gateway (/ws)
 │   └── index.ts               # Server entrypoint listening on 0.0.0.0:4000
 ├── src/                       # React + TypeScript Frontend (aliased as @/*)
 │   ├── store/useStudioStore.ts# Zustand immutable state, undo/redo, persistence, package actions
@@ -54,9 +55,9 @@ Whenever you complete a feature, fix a bug, or alter an interface, **update both
 │   ├── App.tsx                # Unified 5-mode shell & global keyboard shortcuts
 │   └── styles.css             # Dark/Light studio & broadcast UI theme
 └── tests/                     # Automated Vitest suites
-    ├── unit/                  # Project model, editor core, animation, schedule, redaction tests
+    ├── unit/                  # Project model, editor core, animation, enterprise & fleet-ops tests
     ├── archive-fuzz/          # .signage binary round-trip, corruption, bomb, fuzz & script sandbox
-    ├── integration/           # 19-step Essential E2E test + all 10 Network Sync Acceptance Tests
+    ├── integration/           # 19-step E2E, 10 Network Sync Acceptance & Phase 15 Fleet Ops API tests
     └── browser/               # React Testing Library UI mode & interaction tests
 ```
 
@@ -91,6 +92,8 @@ npm run dev
 4. **No `eval()` or `new Function()` in `@packages/script-runtime`**: Package scripts are untrusted data. Execute them strictly through the capability-gated `RestrictedScriptRuntime` and always clean up timers in `onSceneExit` and `dispose`.
 5. **Shared Rendering Semantics**: Studio Canvas Preview, Standalone Player, and the Network Multi-Screen Wall Simulator all render elements through `src/components/shared/SignageElementRenderer.tsx` and compute animations through `computeSceneElementsAtTime` (`@packages/animation-engine`).
 6. **Zero Script Execution During Validation**: `validateSignageArchive` must remain strictly side-effect-free.
+7. **No Environment APIs in `@packages/fleet-operations`**: Proof-of-play aggregation, health grading, alert IDs, backup checksums and retention must stay pure TypeScript (no React, `node:sqlite`, `fs` or DOM globals) so the Fastify server, the static Pages simulator and the React console compute identical results.
+8. **Never Restore Secrets**: Operational backups must exclude `users` / `device_credentials`, redact secret-like columns, verify every SHA-256 checksum before restore, and only write to the four whitelisted telemetry tables.
 
 ---
 
@@ -117,3 +120,10 @@ npm run dev
 ### 4.5 Keeping `ROADMAP.md` and `MNEMOSYNC.md` Updated
 - At the start of a task: Check `MNEMOSYNC.md` for recent context and `ROADMAP.md` for phase status.
 - At the end of a task: Run `npm test && npm run build`, record any new architectural notes or gotchas in `MNEMOSYNC.md`, and update checkboxes in `ROADMAP.md`.
+
+### 4.6 Phase 15 Fleet Operations Gotchas
+- **Proof-of-play idempotency**: Player batches must be normalized via `normalizePlaybackEvents` before `INSERT OR IGNORE` on `playback_events.event_key`; never count a replayed offline batch twice.
+- **Coverage vs. dwell**: `dwellMs` sums clipped durations, `coverageMs` merges overlapping intervals per device. Fleet totals merge all scenes per device; row coverage merges within its group.
+- **Deterministic alerts**: Alert IDs hash `ruleId|deviceId|cooldownBucket`; `saveFleetAlerts` uses `INSERT OR IGNORE` so acknowledgements survive repeated health evaluations.
+- **Static Pages parity**: Any new `/api/v1/operations/*` endpoint needs a matching branch in `src/services/staticServerSimulator.ts` (parse `urlPath.split('?')` first — the fallback router otherwise matches only exact paths).
+- **Offline UI demo**: `NetworkManagementView.tsx` computes its fallback snapshot from `@packages/fleet-operations`, so headless/jsdom UI tests stay deterministic without a backend.

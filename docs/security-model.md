@@ -32,3 +32,10 @@ Digital Signage systems operate unattended in public or semi-public environments
 - Every remote command carries a unique `id`, `idempotencyKey`, `createdAt`, and `expiresAt`.
 - Players reject expired commands or duplicate idempotency keys and never restart sessions that have already ended.
 - Every administrative action and authorization failure is recorded in `audit_log`.
+
+### 2.5 Fleet Telemetry, Backups & Retention (Phase 15)
+- **Untrusted telemetry**: Playback and heartbeat batches are size-limited, validated, clamped and de-duplicated by idempotency key before storage. Unknown device IDs are rejected, and all numeric fields are finite-number checked.
+- **RBAC separation**: Devices may ingest their own telemetry; operators may read summaries and alerts; only admins may edit alert rules, create or restore backups, and apply retention. All mutations are written to `audit_log`.
+- **Secret-redacted backups**: `buildBackupArchive` excludes `users` and `device_credentials` tables entirely and redacts any key matching `password|token|secret|credential|api_key|private_key|authorization`. Rows and table names are canonically sorted so checksums are deterministic.
+- **Tamper-proof restore**: `verifyBackupArchive` recomputes all per-table SHA-256 checksums and the manifest checksum (which includes `createdAtUtc`, `retentionDays` and table hashes). Restore is refused with `INTEGRITY_CHECK_FAILED` on any mismatch, is transactional, and targets only `playback_events`, `health_samples`, `alert_rules` and `fleet_alerts` with fixed column whitelists.
+- **Audit retention**: `applyRetention` enforces configurable maximum age and row count across playback events, health samples, alerts, events and the audit log, pinning active alerts so operators never lose an unresolved incident.

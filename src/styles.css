@@ -2357,3 +2357,30 @@ body.kiosk-lockout-active .app-global-nav {
 .scene-template-size { font-size: 12px; color: #cbd5e1; }
 .scene-template-card > button { margin: 0 16px 16px; min-height: 40px; }
 @media (max-width: 560px) { .scene-dialog-backdrop { padding: 10px; } .scene-dialog { padding: 16px; max-height: calc(100dvh - 20px); } .scene-choice-grid { grid-template-columns: 1fr; } .scene-choice-card { min-height: 150px; } }
+
+/* Isolate preview hit-testing: scaled content must never cover card actions on touch browsers. */
+.scene-template-preview { position: relative; overflow: hidden; contain: layout paint; isolation: isolate; pointer-events: none; flex: 0 0 210px; height: 210px; }
+.scene-template-preview * { pointer-events: none !important; }
+.scene-template-card { min-width: 0; isolation: isolate; }
+.scene-template-card > button { position: relative; z-index: 1; flex-shrink: 0; min-height: 48px; touch-action: manipulation; }
+.scene-dialog { overscroll-behavior: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
+.scene-dialog button { touch-action: manipulation; }
+@media (max-width: 560px) {
+  .scene-dialog-backdrop { align-items: flex-start; padding-top: max(10px, env(safe-area-inset-top)); padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+  .scene-dialog { width: 100%; box-sizing: border-box; }
+  .scene-template-grid { grid-template-columns: minmax(0, 1fr); }
+  .scene-template-preview { flex-basis: 220px; height: 220px; }
+  .scene-template-filters { gap: 8px; }
+  .scene-template-filters select { max-width: 100%; }
+}
+
+/* Authored layer numbers must never outrank the editor's interaction controls. */
+.canvas-logical-surface { isolation: isolate; }
+.canvas-scene-elements {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  isolation: isolate;
+  pointer-events: none;
+}
+.selection-bounding-box { z-index: 10000; }

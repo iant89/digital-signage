@@ -60,6 +60,46 @@ describe('scene template workflow', () => {
     expect(useStudioStore.getState().project.scenes).toHaveLength(count);
   });
 
+  it('keeps mobile previews isolated and selects a template with a touch-generated click', () => {
+    const originalWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+    try {
+      render(<StudioLeftSidebar />);
+      fireEvent.click(screen.getByRole('button', { name: /Scenes \(/i }));
+      fireEvent.click(screen.getByRole('button', { name: /New Scene/i }));
+      fireEvent.click(screen.getByRole('button', { name: /Choose a template/i }));
+      const preview = screen.getByRole('img', { name: 'Corporate Welcome preview' });
+      expect(preview.tagName).toBe('DIV');
+      expect(preview.querySelector('foreignObject')).toBeNull();
+      expect((preview.firstElementChild as HTMLElement).style.pointerEvents).toBe('none');
+      const select = screen.getByRole('button', { name: 'Select Corporate Welcome' });
+      expect(preview.contains(select)).toBe(false);
+      const before = useStudioStore.getState().project.scenes.length;
+      fireEvent.touchStart(select, { touches: [{ clientX: 160, clientY: 530 }] });
+      fireEvent.touchEnd(select, { changedTouches: [{ clientX: 160, clientY: 530 }] });
+      fireEvent.click(select); // Browsers synthesize click after a successful tap.
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(useStudioStore.getState().project.scenes).toHaveLength(before + 1);
+      const state = useStudioStore.getState();
+      expect(state.project.scenes.find(s => s.id === state.activeSceneId)?.name).toBe('Corporate Welcome');
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
+    }
+  });
+
+  it('provides complete layered designs with readable explicit typography', () => {
+    for (const template of SCENE_TEMPLATES) {
+      const scene = instantiateSceneTemplate(template.id);
+      expect(scene.elements.length).toBeGreaterThanOrEqual(10);
+      expect(scene.elements.filter(e => e.type === 'shape').length).toBeGreaterThanOrEqual(3);
+      for (const e of scene.elements.filter(e => e.textProps)) {
+        expect(e.textProps?.autoFit).toBe(false);
+        expect(e.textProps?.verticalAlign).toBe('top');
+        expect(e.textProps!.fontSize * e.textProps!.lineHeight).toBeLessThanOrEqual(e.height + 1);
+      }
+    }
+  });
+
   it('allocates independent ids and fits every layout inside landscape and portrait canvases', () => {
     for (const template of SCENE_TEMPLATES) {
       for (const [w, h] of [[1920, 1080], [1080, 1920], [1080, 1080]]) {

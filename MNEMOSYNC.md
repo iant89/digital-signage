@@ -272,3 +272,15 @@
 - Library uses versioned localStorage key `digital-signage:scene-templates:v1` via separate Zustand store; survives reload/project reset, is local to browser/origin and subject to browser quotas. Files are portable JSON snapshots; file import is not part of this change.
 - New Scene browser merges built-in and personal templates, previews embedded media/scene background, and exposes My Templates category. Selecting personal templates adds all dependencies and playlist item atomically through normal undo/persistence.
 - Verification: 81 tests across 14 files pass, TypeScript/Vite production build passes with existing bundle warning. New tests cover toolbar download, library persistence/preview/reuse/undo, media/group/script/track references and quota failure.
+
+### [2026-10-26] Template redesign and mobile tap reliability
+
+- On `arena/035c4eb2-digital-signage`, redesigned six built-in templates using the layered, high-contrast feel of the original starter scenes. Added mastheads, gradient backgrounds, editorial headings, separately aligned menu prices, feature cards, orbit/disc geometry, information panels and detailed footers. Typography now uses explicit sizes/top alignment (renderer does not implement autoFit), and shape helpers remove unintended default blue borders. Rounded corners scale with template dimensions.
+- Replaced SVG foreignObject previews with ResizeObserver-measured, scaled shared-renderer DOM previews. This avoids mobile foreignObject overflow/hit-test issues; strict clipping, paint containment and pointer-events:none keep preview layers off Select hit targets. Cards have isolated stacking, 48px nonshrinking touch buttons, single-column phone layout, safe-area margins and pan-y scrolling. Portal events stop at the dialog instead of bubbling into editor panels.
+- Added simulated mobile touch-start/end + synthesized click regression verifying one scene creation and dialog closure; added template layer/typography checks alongside existing fit/ID tests. These jsdom tests are not substitutes for physical Safari/Android touchscreen testing.
+
+### [2026-10-26] Overlapping component resize hit targets
+
+- Root cause: selection bounding box used z-index 200 in the same stacking context as authored component z-indices. High-z components could paint/hit-test above resize controls, causing a new selection/move instead.
+- Added isolated `canvas-scene-elements` stacking container at z-index 0; renderer components retain authored ordering within it, while selection controls are siblings at z-index 10000. Canvas surface isolates its own editor stacking. Wrapper passes empty-space hits through; component wrappers explicitly enable pointer events.
+- Added regression with overlapping high-z components to verify overlay structure and selected-only resizing. jsdom verifies structure/events, not physical browser hit testing. All 84 tests / 14 files pass; TypeScript/Vite build passes with existing bundle-size warning.

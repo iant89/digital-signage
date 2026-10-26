@@ -10,15 +10,34 @@ import { useStudioStore } from '@/store/useStudioStore';
 const TemplatePreview: React.FC<{ template: SceneTemplate | SavedSceneTemplate }> = ({ template }) => {
   const scene = useMemo(() => 'scene' in template ? template.scene : instantiateSceneTemplate(template.id), [template]);
   const elements = useMemo(() => computeSceneElementsAtTime(scene.elements, [], 0), [scene]);
-  return <svg className="scene-template-preview" viewBox={`0 0 ${template.width} ${template.height}`}
-    role="img" aria-label={`${template.name} preview`}>
-    <foreignObject width={template.width} height={template.height}>
-      <div style={{ position: 'relative', width: template.width, height: template.height, background: scene.backgroundGradient || scene.backgroundColor, overflow: 'hidden', pointerEvents: 'none' }}>
-        {elements.map(element => <SignageElementRenderer key={element.id} element={element} assets={'assets' in template ? template.assets : []}
-          currentTimeMs={0} sceneName={template.name} interactive={false} />)}
-      </div>
-    </foreignObject>
-  </svg>;
+  const previewRef = useRef<HTMLDivElement>(null);
+  const [bounds, setBounds] = useState({ width: 260, height: 190 });
+  useEffect(() => {
+    const node = previewRef.current;
+    if (!node) return;
+    const measure = () => {
+      const rect = node.getBoundingClientRect();
+      if (rect.width && rect.height) setBounds({ width: rect.width, height: rect.height });
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', measure);
+      return () => window.removeEventListener('resize', measure);
+    }
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  const scale = Math.min((bounds.width - 24) / template.width, (bounds.height - 24) / template.height);
+  return <div ref={previewRef} className="scene-template-preview" role="img" aria-label={`${template.name} preview`}>
+    <div aria-hidden="true" style={{ position: 'absolute', width: template.width, height: template.height,
+      left: (bounds.width - template.width * scale) / 2, top: (bounds.height - template.height * scale) / 2,
+      transform: `scale(${scale})`, transformOrigin: 'top left',
+      background: scene.backgroundGradient || scene.backgroundColor, overflow: 'hidden', pointerEvents: 'none' }}>
+      {elements.map(element => <SignageElementRenderer key={element.id} element={element}
+        assets={'assets' in template ? template.assets : []} currentTimeMs={0} sceneName={template.name} interactive={false} />)}
+    </div>
+  </div>;
 };
 
 export const StudioNewSceneDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
@@ -58,6 +77,7 @@ export const StudioNewSceneDialog: React.FC<{ onClose: () => void }> = ({ onClos
   };
   return createPortal(<div className="scene-dialog-backdrop" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
     <div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="new-scene-heading"
+      onPointerDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}
       className={`scene-dialog ${step === 'templates' ? 'scene-template-browser' : ''}`}>
       <header className="scene-dialog-header">
         <div><h2 id="new-scene-heading">{step === 'choice' ? 'Create a new scene' : 'Choose a scene template'}</h2>
